@@ -1,0 +1,858 @@
+---
+output:
+  pdf_document:
+    number_sections: true
+latex_engine: xelatex
+always_allow_html: true
+fontsize: 12pt
+geometry: "margin=2cm"
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{multirow}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhf{} 
+  - \fancyfoot[C]{\thepage} 
+  - \fancyhead[C]{\scriptsize Universidad Católica del Maule - Facultad de Ciencias Básicas - Ingeniería en Estadística}
+  - \fancypagestyle{plain}{\fancyhf{}}
+  - \usepackage{listings}
+  - \usepackage{xcolor}
+  - \lstset{language=R,basicstyle=\ttfamily\small,frame=single,breaklines=true}
+  - \usepackage{hyperref}
+  - \hypersetup{colorlinks=true, linkcolor=blue}
+  - \renewcommand{\arraystretch}{1.8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(magrittr)
+library(tibble)
+
+#setwd("C:/Users/diego/OneDrive/Escritorio/clases/Diseño de experimentos")
+setwd("C:/Users/raul_/OneDrive - alu.ucm.cl/Universidad/Primer Semestre 2025/Diseño de Experimentos/Trabajo final ANCOVA")
+```
+
+```{=tex}
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\Huge \bfseries Análisis de Covarianzas \\ (ANCOVA) \par}
+  \vspace{2cm}
+  {\normalsize
+  Raúl Frugone Zaror\\
+  Diego Rocha Retamal}
+
+  \vfill
+
+  {\small 01/07/2025}
+\end{titlepage}
+\renewcommand{\contentsname}{Índice}
+\tableofcontents
+```
+\newpage
+
+# Introducción
+
+Al momento de realizar un experimento, se deben definir varias partes de este: la variable respuesta, la unidad experimental, factores, tratamiento, niveles, etc. de manera de poder explicar como afectan diversos tratamientos a la variable de respuesta, en medio de la experimentación y obtención de resultados, se generará una variabilidad total, que viene siendo la suma de aquella variabilidad que controlamos (variabilidad inter) junto a la variabilidad que no controlamos (variabilidad intra), es por esto que se utilizan más factores, denominados bloques con el motivo de reducir lo más posible la variabilidad intra a partir de la eliminación del efecto de factores perturbadores controlables.
+
+El análisis de covarianza (ANCOVA) nace como un método que utiliza la formación de bloques para realizar un análisis más preciso para experimentos que tengan una mayor dificultad.
+
+Supongamos que se tiene una variable de respuesta (Y), y además en la experimentación existe otra variable (X), en donde, X e Y están relacionadas de manera \textbf{lineal}, en adición a lo anterior, supongamos que X no puede ser controlada, pero si se puede observar junto con Y, a esta variable X la llamaremos covariable.
+
+Es por esto que el ANCOVA implica ajustar el efecto de la covariable para reducir el cuadrado medio del error (CME) y con esto dificultar la búsqueda de diferencias reales entre los efectos de los tratamientos. En palabras más sencillas, el ANCOVA es una combinación entre un análisis de varianzas y un análisis de regresión, y queda definido mediante la siguiente ecuación:
+
+$$
+y_{ij} = \mu + \tau_j + \beta(x_{ij} - \bar{x}) + \varepsilon_{ij}  \tag{1-1} \label{def:ecu}
+$$
+
+Donde:
+
+-   $i$: Valores desde 1 hasta $n$.
+
+-   $j$: Valores desde 1 hasta $t$.
+
+-   $y_{ij}$: Variable de respuesta para la observación $i$ del tratamiento $j$.
+
+-   $\mu$: Media global.
+
+-   $\tau_j$: Efecto del tratamiento $j$.
+
+-   $\beta$: Coeficiente de regresión lineal entre $y_{ij}$ y $x_{ij}$, representando la dependencia lineal entre ambos.
+
+-   $x_{ij}$: Medición hecha para la covariable del experimento.
+
+-   $\bar{x}$: Media de los valores $x_{ij}$.
+
+-   $\varepsilon$: Componente de error aleatorio.
+
+Bajo el supuesto de que los errores se distribuyen normalmente, con media 0 y varianza $\sigma^2$ que $\beta \neq 0$, lo que es equivalente a decir que existe una dependencia lineal entre $y_{ij}$ y $x_{ij}$, que la relación verdadera entre $y_{ij}$ y $x_{ij}$ es lineal, que la suma de los coeficientes $\tau$ es 0 y que la covariable no se ve afectada por los tratamientos.
+
+# Supuestos del ANCOVA
+
+## Independencia de las observaciones
+
+Cada sujeto o unidad experimental debe aportar información sin verse influido por los demás. Si hubiera correlación entre errores (por ejemplo, mediciones encadenadas), las inferencias serían inválidas. Gráficamente se revisa con un plot de residuos y, de forma formal, se puede usar el test de `Durbin–Watson` para autocorrelación de primer orden.
+En RStudio se utiliza la función `dwtest(modelo)` de la librería `lmtest`
+
+
+## Linealidad entre covariable y respuesta
+
+Dentro de cada nivel de tratamiento, la relación entre la covariable $X$ y la respuesta $Y$ debe ser aproximada a una línea recta. Para comprobarlo:
+
+1. Se dibuja un diagrama de dispersión de $Y$ vs. $X$ por grupo.
+2. Se añaden las rectas de regresión   
+   $$
+   y = \beta_0 + \beta_1 \cdot x
+   $$  
+   para cada nivel de factor y se verifica visualmente.
+
+También puede hacerse una prueba formal añadiendo un término cuadrático:
+
+`mod_lin  <- lm(Y ~ X + Grupo, data = datos)`
+
+`mod_quad <- lm(Y ~ X + I(X^2) + Grupo, data = datos)`
+
+`anova(mod_lin, mod_quad)`
+
+Si el p-valor del término $I(X^2)$ es mayor a $\alpha$, no hay evidencia de curvatura y mantenemos la linealidad.
+
+## Homogeneidad de pendientes
+
+Las pendientes de la regresión de $Y$ sobre $X$ deben ser iguales en todos los niveles de tratamiento. Se prueba añadiendo la interacción $X	= Grupo$:
+
+`mod0 <- lm(Y ~ X + Grupo, data = datos)`
+
+`mod1 <- lm(Y ~ X * Grupo, data = datos)`
+
+`anova(mod0, mod1)`
+
+- $H_0$: Las pendientes son iguales ($\beta_{X \times Grupo} = 0$).  
+- $H_1$: Al menos una pendiente difiere.
+
+P-valor > $\alpha$ implica pendientes homogéneas.
+
+## Homocedasticidad (igualdad de varianzas)
+
+La varianza de los residuos debe ser constante en todos los niveles de $X$ y del factor. Se inspecciona con un gráfico de residuos vs. valores ajustados y, formalmente, se usa el test de `Breusch–Pagan`:
+
+En RStudio Se utiliza la función `bptest(modelo)` de la librería `lmtest`
+
+
+- $H_0$: Varianza constante.  
+- $H_1$: Varianza depende de predictores.
+
+P-valor > $\alpha$ implica varianza constante.
+
+## Normalidad de los residuos
+
+Los errores deben distribuirse aproximadamente como una normal. Se comprueba con un `QQ-plot` o con la prueba de `Shapiro–Wilk`:
+
+En RStudio Se utiliza la función `shapiro.test(modelo$residuals)`
+
+- $H_0$: Residuos normales.  
+- $H_1$: No normales.
+
+P-valor > $\alpha$ implica residuos normales.
+
+
+# Descripción del procedimiento ANCOVA
+
+Para el desarrollo de ANCOVA se usa la suma cuadrática y el producto cruzado:
+
+-   Suma Cuadrática Total ($SCT$: $SCT_{yy}$, $SCT_{xy}$, $SCT_{xx}$)
+
+-   Suma Cuadrática del Tratamiento ($SCTr$: $SCTr_{yy}$, $SCTr_{xy}$, $SCTr_{xx}$)
+
+-   Suma Cuadrática del Error ($SCE$: $SCE_{yy}$, $SCE_{xy}$, $SCE_{xx}$)
+
+-   Cantidades:
+      - $t$: Cantidad de tratamientos.
+      - $n$: Observaciones del tratamiento $j$.
+      - $N$: Total de observaciones.
+
+## Sumas Cuadráticas
+
+$$
+\begin{aligned}
+SCT_{yy} &= \sum_{j=1}^{t} \sum_{i=1}^{n} (y_{ij} - \bar{y}_{\bullet \bullet})^2 = \sum_{j=1}^{t} \sum_{i=1}^{n} y_{ij}^2 - \frac{y_{\bullet \bullet}^{2}}{N} \\
+SCT_{xx} &= \sum_{j=1}^{t} \sum_{i=1}^{n} (x_{ij} - \bar{x}_{\bullet \bullet})^2 = \sum_{j=1}^{t} \sum_{i=1}^{n} x_{ij}^2 - \frac{x_{\bullet \bullet}^{2}}{N} \\
+SCT_{xy} &= \sum_{j=1}^{t} \sum_{i=1}^{n} (x_{ij} - \bar{x}_{\bullet \bullet}) \cdot (y_{ij} - \bar{y}_{\bullet \bullet}) = \sum_{j=1}^{t} \sum_{i=1}^{n} x_{ij} \cdot y_{ij} - \frac{y_{\bullet \bullet}\cdot x_{\bullet \bullet}}{N} \\
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+SCTr_{yy} &= n \sum_{j=1}^{t} (\bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet})^2 = \frac{1}{n} \sum_{j=1}^{t} y_{\bullet j}^2 - \frac{y_{\bullet \bullet}^{2}}{N} \\
+SCTr_{xx} &= n \sum_{j=1}^{t} (\bar{x}_{\bullet j} - \bar{x}_{\bullet \bullet})^2 = \frac{1}{n} \sum_{j=1}^{t} x_{\bullet j}^2 - \frac{x_{\bullet \bullet}^{2}}{N} \\
+SCTr_{xy} &= n \sum_{j=1}^{t} (\bar{x}_{\bullet j} - \bar{x}_{\bullet \bullet}) \cdot (\bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet}) =  \frac{1}{n} \sum_{j=1}^{t} x_{\bullet j} \cdot y_{\bullet j} - \frac{y_{\bullet \bullet}\cdot x_{\bullet \bullet}}{N} \\
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+SCE_{yy} &= \sum_{j=1}^{t} \sum_{i=1}^{n} (y_{ij} - \bar{y}_{\bullet j})^2 = SCT_{yy} - SCTr_{yy}\\
+SCE_{xx} &= \sum_{j=1}^{t} \sum_{i=1}^{n} (x_{ij} - \bar{x}_{\bullet j})^2 = SCT_{xx} - SCTr_{xx}\\
+SCE_{xy} &= \sum_{j=1}^{t} \sum_{i=1}^{n} (x_{ij} - \bar{x}_{\bullet j}) \cdot (y_{ij} - \bar{y}_{\bullet j}) = SCT_{xy} - SCTr_{xy}\\
+\end{aligned}
+$$
+
+## Modelo
+
+El ajuste de la ecuación \eqref{def:ecu} queda dado por los estimadores de mínimos cuadrados $\hat{\mu}=\bar{y}_{\bullet \bullet}$, $\hat{\tau_j}=\bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet} - \hat{\beta}(\bar{x}_{\bullet j}-\bar{x}_{\bullet \bullet})$, $\hat{\beta}=\frac{SCE_{xy}}{SCE_{xx}}$
+
+El SCE del modelo queda:
+
+$$SCE_m = SCE_{yy}-\frac{(SCE_{xy})^2}{SCE_{xx}}$$ Sabemos por el teorema de Cochran que, bajo normalidad:
+
+$$
+\frac{(n-1)\cdot S^2}{\sigma^2}\sim \chi^2(n-1)
+$$
+
+La varianza del error experimental estimada es:
+
+$$\hat{\sigma}^2_e = \frac{SCE_m}{N-t-1}$$ A partir de esto, tenemos que:
+
+$$
+(N-t-1) \cdot \frac{S^2}{\sigma^2_e} \sim \chi^2(N-t-1) 
+$$
+
+De esta manera, con $S^2 = \frac{SCE_m}{N-t-1}$:
+
+$$
+\frac{SCE_m}{\sigma^2_e} \sim \chi^2(N-t-1)
+$$
+
+Si al suponer que el efecto de los tratamientos es nulo, los estimadores de $\mu$ y $\beta$ quedan como $\hat{\mu}=\bar{y}_{\bullet \bullet}$ y $\hat{\beta}=\frac{SCT_{xy}}{SCT_{xx}}$. Con esto el SCE del modelo reducido queda:
+
+$$SCE'_{m}= SCT_{yy} - \frac{(SCT_{xy})^2}{SCT_{xx}}$$
+
+## Estadístico calculado
+
+Al $SCE_m < SCE'_m$ nos queda que $SCE'_m - SCE_m$ es una suma de cuadrados con $t-1$ grados de libertad. El estadístico de prueba $F_c$ se calcula de la siguiente manera: $$F_c=\frac{\frac{SCE'_m - SCE_m}{t-1}}{\frac{SCE_m}{N-t-1}} \sim F_{(t-1),(N-t-1)}$$
+
+Este procedimiento concluye en contrastar las hipótesis de interés $H_0:\tau_j=0$ v/s $H_1: \tau_l \neq \tau_k$ para algún $l \neq k$, se rechaza la hipótesis nula cuando $F_c>F_{\alpha,t-1,N-t-1}$
+
+De esta manera, se presenta la siguiente tabla para realizar este nuevo análisis de varianza "ajustado", a raíz del análisis junto a la covariable, la tabla se visualiza a continuación:
+
+\newpage
+
+```{=tex}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l|cccc}
+\toprule
+\textbf{\shortstack{Fuente de\\variación}} & \textbf{Suma de cuadrados} & \textbf{Grados de libertad} & \textbf{Cuadrado medio} & \boldmath$F_c$ \\
+\midrule
+Regresión    & $\frac{SCT_{xy}^2}{SCT_{xx}}$          & $1$         &                            &                            \\
+Tratamientos & $SCE'_m - SCE_m$                       & $t - 1$     & $\frac{SCE'_m - SCE_m}{t-1}$ & $\frac{SCE'_m - SCE_m}{t-1}$ \\
+\cline{5-5}
+Error        & $SCE_{yy} - \frac{SCE_{xy}^2}{SCE_{xx}}$ & $N - t - 1$ & $\frac{SCE_m}{N - t - 1}$   & $\hat{\sigma}^2_e$      \\
+Total        & $SCT_{yy}$                             & $N - 1$     &                            &                            \\
+\bottomrule
+\end{tabular}
+}
+```
+
+```{=tex}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l|ccccccc}
+\toprule
+\multirow[c]{2}{*}{\textbf{\shortstack{Fuente de\\variación}}} & \multirow[c]{2}{*}{\textbf{\shortstack{Grados de\\libertad}}} & \multicolumn{3}{c}{\textbf{\shortstack{Sumas de cuadrados\\y productos}}} & \multicolumn{3}{c}{\textbf{Ajustados para regresión}} \\
+
+& & $x$ & $xy$ & $y$ & $y$ & \shortstack{Grados de\\libertad} & Cuadrado medio \\
+\midrule
+Tratamientos & $t-1$ & $SCTr_{xx}$ & $SCTr_{xy}$ & $SCTr_{yy}$ & & & \\
+Error & $N-t$ & $SCE_{xx}$ & $SCE_{xy}$ & $SCE_{yy}$ & $SCE_m$ & $N-t-1$ & $\hat{\sigma}^2_e$ \\
+Total & $N-1$ & $SCT_{xx}$ & $SCT_{xy}$ & $SCT_{yy}$ & $SCE'_m$ & $N-2^{\textbf{*}}$ & \\
+Tratamientos ajustados & & & & & $SCE'_m - SCE_m$ & $t-1$ & $\frac{SCE'_m - SCE_m}{t-1}$ \\
+\bottomrule
+
+
+\multicolumn{8}{l}{\textbf{*} El total pierde 1 grado de libertad por la estimación extra de '$\beta$'}.
+
+\end{tabular}
+}
+```
+
+\newpage
+
+Se tiene el supuesto que el coeficiente de regresión $\beta \neq 0$ que está bajo la hipótesis: $H_0: \beta = 0$ v/s $H_1: \beta \neq 0$. Usando el estadístico calculado:
+
+$$F_c =\frac{\frac{(SCE_{xy})^2}{SCE_{xx}}}{\hat{\sigma}^2_e}$$
+
+Donde se rechaza si: $F_c > F_{(\alpha,1,N-t-1)}$, por lo que se distribuye $F_{(1,N-t-1)}$
+
+## Error
+
+La verificación del diagnóstico del modelo de covarianza se basa en el análisis residual. Para el modelo de covarianza, los residuos son:
+
+$$
+e_{ij}= y_{ij}- \hat{y}_{ij}
+$$
+
+
+Donde, cada valor ajustado $\hat{y}_{ij}$ esta dado por:
+
+$$
+  \hat{y}_{ij}=\hat{\mu}+\hat{\tau}_j - \hat{\beta}(x_{ij}-\bar{x}_{\bullet\bullet})
+$$
+
+Sabemos que:
+
+$\hat{\mu} = \bar{y}_{\bullet\bullet}$ y  que $\hat{\tau}_j =  \bar{y}_{\bullet j}-\bar{y}_{\bullet\bullet}$
+
+Por lo que $\hat{y}_{ij}$ queda finalmente calculado mediante:
+
+$$
+ \hat{y}_{ij}=\bar{y}_{\bullet\bullet}+\bar{y}_{\bullet j}-\bar{y}_{\bullet\bullet} + \hat{\beta}(x_{ij}-\bar{x}_{\bullet\bullet}) = \bar{y}_{\bullet j}+\hat{\beta}(x_{ij}-\bar{x}_{\bullet\bullet})
+$$ 
+
+Por esto, los residuos quedarían dados por:
+
+$$e_{ij} = y_{ij} - \bar{y}_{ \bullet j } - \hat{\beta}(x_{ij} - \bar{x}_{\bullet j})$$
+
+
+## Probar $H_0$ mediante prueba general de significación de la regresión
+
+Es posible desarrollar mediante regresión un procedimiento que compruebe la hipótesis nula $H_0 : \tau_j =0$ para el modelo de análisis de varianza con covarianza:
+
+$$
+y_{ij} = \mu + \tau_j + \beta(x_{ij}- x_{\bullet\bullet}) + \varepsilon_{ij}
+$$
+
+Para esto es necesario realizar la estimación de los parámetros del modelo. Considerando que la estimación de los parámetros del modelo anterior por máxima verosimilitud. Así, la función de Máxima Verosimilitud queda expresada como:
+
+
+$$
+L(\mu,\tau,\beta,\sigma^2)
+=\prod_{i=1}^{n}\,\prod_{j=1}^{t}
+\frac{1}{\sqrt{2\pi\sigma^2}}
+\exp\!\biggl(
+  -\frac{\bigl(y_{ij}-\mu-\tau_j-\beta(x_{ij}-\bar x_{..})\bigr)^2}{2\sigma^2}
+\biggr).
+$$
+Aplicamos función logarítmo y obtenemos la función de Log-Verosimilitud
+
+$$
+\ell(\mu,\tau,\beta,\sigma^2)
+=-\frac{n}{2}\,\log\bigl(2\pi\sigma^2\bigr)
+-\frac{1}{2\sigma^2}
+\sum_{i=1}^{n}\sum_{j=1}^{t}
+\bigl(y_{ij}-\mu-\tau_j-\beta(x_{ij}-\bar x_{..})\bigr)^2
+$$
+
+Luego, a partir de las derivadas de $\ell$ con respecto a los parámetros $\mu$, $\tau$ , $\beta$ y $\sigma^2$ con la posterior igualación a 0 y despejando se obtiene que:
+
+Para la estimación de $\mu$ se parte derivando la función de log-verosimilitud con respecto a $\mu$ e igualando a cero. Se obtiene:
+
+$$
+\sum_{i=1}^{n}\sum_{j=1}^{t}
+\bigl(y_{ij}-\mu-\tau_j-\beta(x_{ij}-\bar x_{..})\bigr)=0 .
+$$
+
+Luego, separamos las sumatorias y resaltamos los términos que dependen de $\mu$:
+
+$$
+\sum_{i=1}^{n}\sum_{j=1}^{t} y_{ij}\;
+-\; N\mu
+-\; t\sum_{j=1}^{t}\tau_j
+-\; \beta\sum_{i=1}^{n}\sum_{j=1}^{t}(x_{ij}-\bar x_{..})=0 .
+$$
+
+Obsérvese que el segundo y el cuarto sumando se simplifican empleando la identidad  
+
+$$
+\sum_{i=1}^{n}\sum_{j=1}^{t}(x_{ij}-\bar x_{..}) = 0 ,
+$$
+
+por construcción $\bar x_{..}$ es el promedio global de $x$.  
+
+Finalmente, despejamos $\mu$ para obtener su estimador de máxima verosimilitud:
+
+$$
+\hat{\mu}\;=\;\frac{1}{N}\sum_{i=1}^{n}\sum_{j=1}^{t}y_{ij}\;=\;\bar y_{..},
+$$
+
+es decir, la media muestral global de la variable respuesta.
+
+
+Para la estimación de $\tau_j$ se parte derivando la función de log-verosimilitud con respecto a $\tau_j$ e igualándola a cero. Se obtiene:
+
+$$
+\sum_{i=1}^{n}\bigl(y_{ij}-\mu-\tau_j-\beta(x_{ij}-\bar x_{..})\bigr)=0 .
+$$
+
+Luego, separamos las sumatorias y destacamos los términos que dependen de $\tau_j$:
+
+$$
+\sum_{j=1}^{t} y_{ij}
+\;-\; N\mu
+\;-\; N\tau_j
+\;-\; \beta\sum_{j=1}^{n}(x_{ij}-\bar x_{..})=0 .
+$$
+
+Aplicamos la identidad
+
+$$
+\sum_{j=1}^{n}(x_{ij}-\bar x_{..}) = N\bigl(\bar x_{i.}-\bar x_{..}\bigr),
+$$
+
+y despejamos $\tau_j$:
+
+$$
+\tau_j
+=\frac{\displaystyle\sum_{j=1}^{n}y_{ij}
+      \;-\; N\mu
+      \;-\; \beta\,N\bigl(\bar x_{i.}-\bar x_{..}\bigr)}{N}.
+$$
+
+Finalmente, sustituyendo las definiciones de promedios obtenemos el estimador:
+
+$$
+\hat{\tau}_j
+=\bar y_{i.}-\bar y_{..}
+-\beta\bigl(\bar x_{i.}-\bar x_{..}\bigr),
+$$
+
+que representa el efecto del nivel $j$ ajustado por la covariable $x$ y centrado en el promedio global.
+
+
+Para la estimación de $\beta$ se parte derivando la función de log-verosimilitud con respecto a $\beta$ e igualándola a cero. Se obtiene:
+
+$$
+\frac{\partial \ell}{\partial \beta}
+= \frac{1}{\sigma^{2}}
+\sum_{i=1}^{n}\sum_{j=1}^{t}
+\bigl(y_{ij}-\mu-\tau_j-\beta(x_{ij}-\bar x_{..})\bigr)\,(x_{ij}-\bar x_{..})
+= 0 .
+$$
+
+Luego, separamos las sumatorias para destacar los términos que contienen a $\beta$:
+
+$$
+\sum_{i=1}^{n}\sum_{j=1}^{t} y_{ij}(x_{ij}-\bar x_{..})
+\;-\; \mu\sum_{i=1}^{n}\sum_{j=1}^{t}(x_{ij}-\bar x_{..})
+\;-\; \sum_{j=1}^{t}\tau_j\sum_{i=1}^{n}(x_{ij}-\bar x_{..})
+\;-\; \beta\sum_{i=1}^{n}\sum_{j=1}^{t}(x_{ij}-\bar x_{..})^{2}=0 .
+$$
+
+Las dos primeras sumas que acompañan a $\mu$ y a $\tau_j$ se anulan de la siguiente manera:  
+
+$$
+\sum_{i=1}^{n}\sum_{j=1}^{t}(x_{ij}-\bar x_{..}) = 0,
+\qquad
+\sum_{i=1}^{n}\tau_j(x_{ij}-\bar x_{..}) = 0.
+$$
+
+De este modo, despejamos $\beta$:
+
+$$
+\hat{\beta}
+= \frac{\displaystyle
+        \sum_{i=1}^{n}\sum_{j=1}^{t}(y_{ij}-\mu-\tau_j)(x_{ij}-\bar x_{..})}{
+      \displaystyle
+        \sum_{i=1}^{n}\sum_{j=1}^{t}(x_{ij}-\bar x_{..})^{2}} .
+$$
+
+Este es el estimador de máxima verosimilitud para la pendiente asociada a la covariable $x$, análogo al estimador de regresión lineal simple pero ajustado por los efectos de tratamiento $\tau_j$.
+
+
+Para la estimación de $\sigma^{2}$ se deriva la función de log-verosimilitud con respecto a $\sigma^{2}$ e igualamos a cero:
+
+$$
+-\frac{N}{2\sigma^{2}}
+\;+\;
+\frac{1}{2\sigma^{4}}
+\sum_{j=1}^{t}\sum_{i=1}^{n}
+\bigl(y_{ij}-\mu-\tau_{j}-\beta(x_{ij}-\bar x_{..})\bigr)^{2}
+\;=\;0 .
+$$
+
+Multiplicamos por $2\sigma^{4}$ para despejar denominadores:
+
+$$
+-N\sigma^{2}
+\;+\;
+\sum_{j=1}^{t}\sum_{i=1}^{n}
+\bigl(y_{ij}-\mu-\tau_{j}-\beta(x_{ij}-\bar x_{..})\bigr)^{2}=0 .
+$$
+
+Finalmente, despejamos $\sigma^{2}$:
+
+$$
+\hat{\sigma}^{2}
+\;=\;
+\frac{1}{N}\;
+\sum_{j=1}^{t}\sum_{i=1}^{n}
+\bigl(y_{ij}-\mu-\tau_{j}-\beta(x_{ij}-\bar x_{..})\bigr)^{2},
+$$
+
+que corresponde al promedio de los cuadrados de los residuales ajustados por los efectos de tratamiento y la covariable.
+
+
+A partir de la siguiente condición $\sum_{j=1}^t \hat{\tau}_j=0$  para $\beta$ obtenemos:
+
+$$\sum_{j=1}^t(\bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet}) \cdot \sum_{i=1}^n(x_{ij} - \bar{x}_{\bullet \bullet}) - \beta \cdot \sum_{j=1}^t(x_{\bullet j} - \bar{x}_{\bullet \bullet}) \cdot \sum_{i=1}^n(x_{ij} - \bar{x}_{\bullet \bullet}) + \beta \cdot SCT_{xx} = SCT_{xy}$$
+
+Recordemos las formulas para SCTr, SCE y SCT vistas con anterioridad:
+
+$$SCTr_{xy}=\sum_{j=1}^t(\bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet}) \cdot \sum_{i=1}^n(x_{ij} - \bar{x}_{\bullet \bullet})$$
+$$SCTr_{xx}=\sum_{j=1}^t(\bar{x}_{\bullet j} - \bar{x}_{\bullet \bullet}) \cdot \sum_{i=1}^n(x_{ij} - \bar{x}_{\bullet \bullet})$$
+Además de recordar que $SCT=SCTr + SCE$
+
+Por lo tanto, reemplazando:
+
+$$SCTr_{xy}- \beta \cdot SCTr_{xx} + \beta \cdot SCT_{xx} = SCT_{xy}$$
+
+Resolviendo algebraicamente:
+
+$$\beta \cdot (SCT_{xx}-SCTr_{xx}) = \frac{SCT_{xy}-SCTr_{xy}}{ SCT_{xx}-SCTr_{xx} }= \frac{SCE_{xy}}{SCE_{xx}}$$
+
+Por lo tanto, el estimador para $\beta$ queda definido como:
+
+$$\hat{\beta}=\frac{SCE_{xy}}{SCE_{xx}}$$
+
+Ahora, reemplazando los estimadores encontrados anteriormente dentro de la reducción de la suma de cuadrados total, nos queda lo siguiente:
+
+$$R(\mu, \tau, \beta)= \hat{\mu}\cdot y_{\bullet \bullet} + \sum_{j=1}^t \hat{\tau_j}\cdot y_{\bullet j}+\hat{\beta}\cdot SCT_{xy}$$
+
+Ahora reemplazando:
+
+$$R(\mu, \tau, \beta) = 
+\bar{y}_{\bullet \bullet} \cdot y_{\bullet \bullet} + 
+\sum_{j=1}^t \left[ \bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet} - \hat{\beta}(x_{\bullet j} - x_{\bullet \bullet}) \right] \cdot y_{\bullet j} + 
+\hat{\beta} \cdot SCT_{xy}$$
+
+$$R(\mu, \tau, \beta) = 
+\bar{y}_{\bullet \bullet} \cdot y_{\bullet \bullet} + 
+\sum_{j=1}^t \left[ \bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet} - \frac{SCE_{xy}}{SCE_{xx}}(x_{\bullet j} - x_{\bullet \bullet}) \right] \cdot y_{\bullet j} + 
+\frac{SCE_{xy}}{SCE_{xx}} \cdot SCT_{xy}$$
+
+$$R(\mu, \tau, \beta) = 
+\frac{y_{\bullet \bullet}^2}{t \cdot n} + 
+\sum_{j=1}^t  (\bar{y}_{\bullet j} - \bar{y}_{\bullet \bullet})\cdot y_{\bullet j} - \frac{SCE_{xy}}{SCE_{xx}} \cdot \sum_{j=1}^t(x_{\bullet j} - x_{\bullet \bullet})\cdot y_{\bullet j}  + 
+\frac{SCE_{xy}}{SCE_{xx}} \cdot SCT_{xy}$$
+
+Resolviendo, se obtiene:
+
+$$R(\mu, \tau, \beta) = 
+\frac{y_{\bullet \bullet}^2}{t \cdot n} + SCTr_{yy}-\frac{SCE_{xy}}{SCE_{xx}} \cdot (SCTr_{xy}- SCT_{xy})$$
+
+Sabemos que: $SCTr_{xy} - SCT_{xy}= -SCE_{xy}$
+
+Por lo tanto finalmente la reducción queda de la siguiente manera:
+
+$$R(\mu, \tau, \beta) = 
+\frac{y_{\bullet \bullet}^2}{t \cdot n} + SCTr_{yy} + \frac{SCE_{xy}^2}{SCE_{xx}}$$
+
+Esta suma de cuadrados tiene $t+1$ grados de libertad debido a que corresponde al rango de las ecuaciones del modelo. En cuanto a la suma de cuadrados del error de este modelo queda definida por:
+
+$$SCE_{m}= \sum_{i=1}^n \sum_{j=1}^t y_{ij}^2 - R(\mu, \tau, \beta)$$
+
+Reemplazando:
+
+$$SCE_{m}= \sum_{i=1}^n \sum_{j=1}^t y_{ij}^2 - (\frac{y_{\bullet \bullet}^2}{t \cdot n} + SCTr_{yy} + \frac{SCE_{xy}^2}{SCE_{xx}})$$
+Sabemos que $\sum_{i=1}^n \sum_{j=1}^t y_{ij}^2 - \frac{y_{\bullet \bullet}^2}{t \cdot n} = SCT_{yy}$
+
+$$SCE_{m}= (SCT_{yy} - SCTr_{yy}) + \frac{SCE_{xy}^2}{SCE_{xx}}$$
+
+Finalmente, se obtiene:
+
+$$SCE_{m}= SCE_{yy} - \frac{SCE_{xy}^2}{SCE_{xx}}$$
+Con $N-t-1$ grados de libertad
+
+## Modelo restringido
+
+Ahora sea un modelo donde la hipótesis nula sea $H_0:\tau_{1} = ...=\tau_{t}=0$, el modelo reducido queda:
+
+$$y_{ij}=\mu + \beta(x_{ij}-\bar{x}_{\bullet\bullet}+\varepsilon_{ij})$$
+
+Las ecuaciones de mínimos cuadrados para este modelo quedan:
+
+$\hat{\mu}=\bar{y}_{\bullet\bullet}$
+
+$\hat{\beta}=\frac{SCT_{xy}}{SCT_{xx}}$
+
+Lo que deja la suma de cuadrados total del modelo reducido como:
+
+$$R(\mu, \beta) = 
+\frac{y_{\bullet \bullet}^2}{t \cdot n} + \frac{SCT_{xy}^2}{SCT_{xx}}$$
+
+$$R(\tau | \mu, \beta)= R(\tau, \mu, \beta) - R(\mu, \beta)$$
+
+$$R(\tau | \mu, \beta)= \frac{y_{\bullet \bullet}^2}{t \cdot n} + SCTr_{yy} + \frac{SCE_{xy}^2}{SCE_{xx}} - (\frac{y_{\bullet \bullet}^2}{t \cdot n} + \frac{SCT_{xy}^2}{SCT_{xx}})$$
+
+Recordar que $SCTr_{yy} = SCT_{yy} - SCE_{yy}$, por lo que si se acomodan los términos queda:
+
+
+$$R(\tau | \mu, \beta)= (SCT_{yy}-\frac{SCT_{xy}^2}{SCT_{xx}} ) - (SCE_{yy}-\frac{SCE_{xy}^2}{SCE_{xx}})$$
+
+Y esto es igual a:
+
+$$R(\tau | \mu, \beta)= SCE'_{m} - SCE_{m}$$
+con $t-1$ grados de libertad
+
+Lo que anteriormente se usa para el $F_c$, aquí se encuentra lo mismo, por lo que el estadístico de prueba queda:
+
+$$F_c=\frac{\frac{SCE'_{m} - SCE_{m}}{t-1}}{\frac{SCE_{m}}{N-t-1}}$$
+
+Por tanto usando la prueba general de significación de la regresión, queda terminado el desarrollo eurístico.
+
+# Objetivos del ANCOVA
+
+El análisis de covarianza (ANCOVA) tiene varios objetivos fundamentales:
+
+1. *Controlar el efecto de covariables.* Cuando existe una variable continua que influye en la respuesta (por ejemplo, una medida previa o una característica inicial de los sujetos), el ANCOVA permite «ajustar» las diferencias debidas a esa covariable para comparar los tratamientos en igualdad de condiciones.
+
+2. *Reducir la variabilidad residual.* Al explicar parte de la variación de la variable respuesta mediante la covariable, la varianza de los errores disminuye, lo que hace al modelo más preciso.
+
+3. *Incrementar la potencia estadística.* Con menor varianza no explicada, es más fácil detectar diferencias reales entre tratamientos con muestras más pequeñas.
+
+4. *Ajustar medias de grupo.* El ANCOVA produce medias «ajustadas» o medias marginales que ya toman en cuenta las covariables, facilitando comparaciones más justas.
+
+5. *Corregir sesgos por desbalance.* Si los grupos difieren inicialmente en la covariable (por ejemplo, un pretest distinto), el ANCOVA mitiga ese sesgo.
+
+
+# Usos comunes del ANCOVA
+
+El ANCOVA es muy útil en:
+
+- Diseños pretest–postest, donde cada sujeto tiene una medida inicial que se controla al evaluar el tratamiento.
+- Experimentos con covariables ambientales, como temperatura o edad, para aislar el efecto del tratamiento.
+- Ensayos clínicos, ajustando variables de confusión (peso, edad, nivel inicial de un biomarcador).
+- Psicología y educación, donde controles de habilidades previas garantizan comparaciones justas.
+
+\newpage
+
+# Ejercicio de Ejemplo
+
+Como un ejemplo de un experimento en el que puede emplearse el análisis de covarianza, considérese el estudio realizado en INCHALAM S.A., empresa productora y exportadora de alambres y derivados para determinar si existe una diferencia en la resistencia de una fibra de monofilamento producida por tres máquinas diferentes.
+
+**Tabla de datos**
+
+```{r, echo=FALSE}
+tabla_datos <- tribble(
+  ~y,   ~x,     ~y,    ~x,    ~y,    ~x,
+  "36",  "20",  "40",  "22",  "35",  "21",
+  "41",  "25",  "48",  "28",  "37",  "23",
+  "39",  "24",  "39",  "22",  "42",  "26",
+  "42",  "25",  "45",  "30",  "34",  "21",
+  "49",  "32",  "44",  "28",  "32",  "15"
+  )
+
+kbl(tabla_datos, format = "latex", booktabs = TRUE, align = "cccccc",
+    caption = "Datos de la resistencia a la ruptura ($y$ = resistencia en libras, $x$ = diámetro en $10^{-3}$ pulgadas)") %>%
+  kable_styling(latex_options = c("scale_down", "hold_position")) %>%
+  add_header_above(c("Máquina 1" = 2, "Máquina 2" = 2, "Máquina 3" = 2))
+```
+
+**Modelo:** $y_{ij} = \mu + \tau_j + \beta(x_{ij} - \bar{x}) + \varepsilon_{ij}$
+
+Donde:
+
+- $y_{ij}$: Resistencia a la ruptura del $i$-ésimo material producido por la $j$-ésima máquina.
+- $\mu$: Media general ajustada.
+- $\tau_j$: Efecto medio del tratamiento (máquina $j$), con la restricción $\sum \tau_j = 0$.
+- $\beta$: Coeficiente de regresión común para la covariable $x$ (diámetro).
+- $x_{ij}$: Diámetro correspondiente a $y_{ij}$.
+- $\bar{x}$: Promedio global del diámetro.
+- $\varepsilon_{ij}$: Error aleatorio, $\varepsilon_{ij} \sim N(0, \sigma^2)$.
+
+**Contraste de hipótesis:**
+
+- **Efecto del diámetro (covariable)**:
+
+  $$
+  \begin{aligned}
+    H_0 &: \beta = 0 \quad \text{(el diámetro no afecta la resistencia)} \\
+    H_1 &: \beta \ne 0 \quad \text{(el diámetro sí afecta la resistencia)}
+  \end{aligned}
+  $$
+
+- **Efecto del tratamiento (máquina)**:
+
+  $$
+  \begin{aligned}
+    H_0 &: \tau_1 = \tau_2 = \tau_3 = 0 \quad \text{(no hay diferencias entre máquinas)} \\
+    H_1 &: \exists \, l \ne k \text{ tal que } \tau_l \ne \tau_k \quad \text{(al menos una máquina difiere)}
+  \end{aligned}
+  $$
+  
+**Verificación de supuestos**  
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+supuestos <- data.frame(
+  Supuesto = c("Linealidad", "Independencia", "Homocedasticidad", "Homogeneidad de las pendientes", "Normalidad"),
+  `Valor-p` = c(0.2174, 0.219, 0.3663, 0.6367, 0.7201),
+  Interpretación = c(
+    "Se comprueba el supuesto, a favor de una forma correcta en las variables.",
+    "Se comprueba el supuesto, a favor de que los errores no están autocorrelacionados.",
+    "Se comprueba el supuesto, a favor de que las varianzas de los residuos son constantes.",
+    "Se comprueba el supuesto, a favor de que las pendientes se mantienen constantes.",
+    "Se comprueba el supuesto, a favor de que los residuos se distribuyen de manera normal."
+  )
+)
+kbl(supuestos, format = "latex", booktabs = TRUE,
+    caption = "Verificación de supuestos del modelo ANCOVA") %>%
+  kable_styling(latex_options = c("scale_down", "hold_position"))
+```
+
+```{r dispersion, echo=FALSE, out.width="70%", fig.align='center'}
+knitr::include_graphics("dispersión.png")
+```
+
+**Cálculo de sumas cuadradas y productos cruzados**
+
+$$SCT_{xx} = \sum_{j=1}^{3} \sum_{i=1}^{5} x_{ij}^2 - \frac{x_{\cdot\cdot}^2}{N}
+= (20)^2 + (25)^2 + \dots + (15)^2 - \frac{(362)^2}{15} = 261.73$$
+
+$$SCT_{xy} = \sum_{j=1}^{3} \sum_{i=1}^{5} x_{ij} y_{ij}
+- \frac{(x_{\cdot\cdot})(y_{\cdot\cdot})}{N}
+= (20)(36) + (25)(41) + \dots + (15)(32) - \frac{(362)(603)}{15} = 282.60$$
+  $$
+ SCT_{yy} =
+\sum_{j=1}^{3} \sum_{i=1}^{5} y_{ij}^2 - \frac{y_{\cdot\cdot}^2}{N}
+= (36)^2 + (41)^2 + \dots + (32)^2 - \frac{(603)^2}{15} = 346.40
+$$
+$$
+ SCTr_{xx} = \frac{1}{n} \sum_{j=1}^{3} x_i^2 - \frac{x_{\cdot\cdot}^2}{N}
+= \frac{1}{5} \left[(126)^2 + (130)^2 + (106)^2 \right] - \frac{(362)^2}{15} = 66.13
+ $$
+ $$
+ SCTr_{xy} = \frac{1}{n} \sum_{i=1}^{3} x_i y_i - \frac{(x_{\cdot\cdot})(y_{\cdot\cdot})}{N}
+= \frac{1}{5} \left[ (126)(207) + (130)(216) + (106)(180) \right] - \frac{(362)(603)}{15} = 96.00
+ $$
+   $$
+ SCTr_{yy} = \frac{1}{n} \sum_{j=1}^{3} y_i^2 - \frac{y_{\cdot\cdot}^2}{N}
+= \frac{1}{5} \left[(207)^2 + (216)^2 + (180)^2 \right] - \frac{(603)^2}{15} = 140.40
+ $$
+
+$$
+ SCE_{xx} = SCT_{xx} - SCTr_{xx} = 261.73 - 66.13 = 195.60
+ $$
+
+  $$
+ SCE_{xy}= SCT_{xy} - SCTr_{xy} = 282.60 - 96.00 = 186.60
+ $$
+
+  $$
+ SCE_{yy} = SCT_{yy} - SCTr_{yy} = 346.40 - 140.40 = 206.00
+ $$
+ 
+ $$
+ SCE_{m} = SCE_{yy} - \frac{(SCE_{xy})^2}{SCE_{xx}}
+= 206.00 - \frac{(186.60)^2}{195.60}
+= 27.99
+ $$
+  $$
+ SCE'_{m} = SCT_{yy} - \frac{(SCT_{xy})^2}{SCT_{xx}}
+= 346.40 - \frac{(186.60)^2}{261.73}
+= 41.27
+ $$
+ 
+ **Cálculo cuadrado medio**
+ 
+  $$
+ CME = \frac{SCE_m}{N-t-1}= \frac{27.99}{11} = 2.54
+ $$
+$$
+CMTr = \frac{SCE'_{m} - SCE_m}{t-1} = \frac{41.27 - 27.99}{2} = 6.64
+$$
+ 
+ **Estadístico $F_0$ y valor-p**
+ 
+  $$
+ F_0 = \frac{CMTr}{CME}= \frac{6.64}{2.54}=2.61 ; F_{0.05,2,11}=3.982298
+ $$
+ 
+ $$
+ \text{valor-p} = P(F_0>F_{\alpha,2,11}) = 0.1181
+ $$
+**Tabla ANCOVA**
+
+```{r tabla-ancova, echo=FALSE, message=FALSE, warning=FALSE}
+# Tabla como character (todo entre comillas)
+tabla <- tribble(
+  ~`Fuente de variación`, ~gl, ~x, ~xy, ~y, ~`y ajustado`, ~`gl ajustado`, ~`Cuadrado medio`, ~`F_0`, ~`Valor P`,
+  "Tratamiento",           "2",   "66.13", "96",   "140.40", " ",   " ",     " ",     " ",      " ",
+  "Error",                "12",   "195.6", "186.6","206",    "27.99", "11",    "2.54",    " ",      " ",
+  "Total",                "14",   "261.73","282.6",  "346.4",  "41.27", "13",    " ",      " ",      " ",
+  "Tratamientos ajustados", " "," ",    " ",   " ",     "13.28", "2",     "6.64",    "2.61",    "0.1181"
+)
+
+# Mostrar con encabezados combinados
+kbl(tabla, format = "latex", booktabs = TRUE, align = "lccccccccc",
+    caption = "Tabla ANCOVA: sumas de cuadrados, productos cruzados y efectos ajustados") %>%
+  kable_styling(latex_options = c("scale_down", "hold_position")) %>%
+  add_header_above(c(" " = 2,
+                     "Sumas de cuadrados y productos" = 3,
+                     "Ajustados para la regresión" = 3,
+                     " " = 2))
+
+```
+**Estimación parámetros**
+
+ 
+$$\hat{\beta}=\frac{SCE_{xy}}{SCE_{xx}}=\frac{186.6}{195.6}=0.954$$
+
+Calculamos el estadístico de prueba para $H_0 : \beta = 0$
+
+$$F_0 = \frac{\frac{SCE_{xy}^2}{SCE_{xx}}}{CME}= \frac{178.01}{2.54}=70.08$$
+$$F_{0.95,1,11}=4.84$$
+$$\text{valor-p}= 0.00000423$$
+
+De esta manera los valores ajustados se podrían calcular de la siguiente manera:
+
+$$
+\hat{y}_{ij}= \mu + \tau_j + \hat{\beta}(x_{ij} - \bar{x}_{\cdot\cdot})
+$$
+$$
+\hat{y}_{ij}=\bar{y}_{\cdot\cdot} + \left[ \bar{y}_{\cdot j} - \bar{y}_{\cdot\cdot} - \hat{\beta}(\bar{x}_{\cdot j} - \bar{x}_{\cdot\cdot}) \right] + \hat{\beta}(x_{ij} - \bar{x}_{\cdot j})
+$$
+
+$$
+\hat{y}_{ij}= \bar{y}_{\cdot j} + \hat{\beta}(x_{ij} - \bar{x}_{\cdot j})
+$$
+
+$$
+\hat{y}_{ij}= \bar{y}_{\cdot j} + 0.954 \cdot (x_{ij} - \bar{x}_{\cdot j})
+$$
+
+
+De esta manera, como forma de concluir el ejercicio, no rechazamos la hipotesis nula para los tratamientos a favor de que los efectos medios de las máquinas son iguales, es decir no existen diferencias significativas entre máquinas de producción.
+
+Se rechaza $H_0$ para la hipotesis de la regresión a favor de que el diámetro del alambre afecta a la resistencia de la fibra de monofilamento.
+
+En la región, la agricultura es una de las principales potencias económicas, en este rubro, las fibras de monofilamento se utilizan principalmente como refuerzo en estructuras agrícolas como invernaderos, sistemas de soporte, y cercas, ofreciendo mayor durabilidad y resistencia que otros materiales, a raíz de esto se indicaría que las 3 máquinas de INCHALAM S.A. entregan un material de misma calidad y que un aspecto importante a medir para conseguir una mejor resistencia es el diametro de la fibra.
+
+# Conclusión
+
+El análisis de covarianza (ANCOVA) constituye una herramienta estadística robusta que combina las características del análisis de varianza (ANOVA) con la regresión lineal, permitiendo comparar grupos categóricos mientras se controla el efecto de una o más variables cuantitativas denominadas covariables. Esta técnica es especialmente útil en contextos donde aparte del factor de interés (por ejemplo, distintos tratamientos, métodos o equipos como en el caso de las máquinas), se reconoce la presencia de variables continuas que podrían influir significativamente en la variable de respuesta.
+
+En términos prácticos, ANCOVA ajusta las comparaciones entre grupos considerando el impacto de estas covariables, lo que permite eliminar o reducir la variabilidad no atribuible al factor principal. De este modo, se logra una estimación más precisa del efecto real del tratamiento, mejorando la potencia estadística y la validez interna del análisis.
+
+Aplicado al contexto del presente estudio, ANCOVA permite evaluar si existen diferencias significativas en la resistencia de las fibras producidas por distintas máquinas, descontando el posible efecto del diámetro del monofilamento (covariable). Esto es crucial, ya que sin controlar dicha influencia, las diferencias observadas entre máquinas podrían deberse parcial o completamente a variaciones en el diámetro y no a las máquinas en sí.
+
+Además, ANCOVA es aplicable tanto en diseños experimentales como en estudios observacionales, lo que refuerza su utilidad en investigaciones donde no es posible mantener el control total sobre todas las variables. Su uso garantiza comparaciones más equitativas y científicamente fundamentadas entre grupos, al considerar el contexto en el que se producen los datos.
+
+
+# Referencias
+
+- Maxwell, S. E., & Delaney, H. D. (2004). Designing Experiments and Analyzing Data: A Model Comparison Perspective (2nd ed.). Lawrence Erlbaum.
+
+- Montgomery, D. C. (2017). Design and Analysis of Experiments (9ª ed.). John Wiley & Sons.
+
+- Sosa, S. (s.f.). ANCOVA en R. RPubs. recuperado en 18 de junio de 2025. https://rpubs.com/sebas_Alf/737954
+
+# Anexos
+
+En esta sección se presentará el código y los resultados para resolver el ejercicio de manera computacional:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, child='Ejercicio Resuelto.Rmd'}
+
+```

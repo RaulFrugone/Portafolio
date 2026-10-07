@@ -1,0 +1,15 @@
+
+/* styles.css — inclúyelo junto al .Rmd para pulir tu informe */
+body {
+  font-family: Roboto, sans-serif;
+  line-height: 1.5;
+  font-size: 16px;
+}
+table.kable {
+  margin-left: auto !important;
+  margin-right: auto !important;
+  max-width: 90% !important;   /* No abarquen todo el ancho */
+}
+.kable tbody tr:nth-child(odd) td {
+  background-color: #f9f9f9;    /* rayado muy suave */
+}

@@ -1,0 +1,498 @@
+---
+title: "Resolución computacional ANCOVA"
+author: "Diego Rocha Retamal y Raúl Frugone Zaror"
+date: "01/07/2025"
+output: 
+  rmdformats::material:
+    self_contained: true 
+    thumbnails: false 
+    lightbox: false
+    gallery: false 
+    highlight: tango 
+    code_folding: hide
+editor_options: 
+  markdown:  
+     wrap:72
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(
+  warning  = FALSE,
+  message  = FALSE,
+  comment  = "",
+  results = "asis",
+  fig.align = "center"
+)
+
+# Que las celdas NA salgan en blanco
+options(knitr.kable.NA = "")
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(broom)    
+library(car)
+library(lmtest)
+library(ggplot2)
+library(tibble)
+```
+
+# Problema
+
+INCHALAM S.A., empresa productora y exportadora de alambres y derivados desea comprobar si existe una diferencia en la resistencia de una fibra de monofilamento producida por sus tres máquinas diferentes. Se sabe que el **diámetro del material (x)** puede influir en su **resistencia (y)**. Para controlar esta variabilidad, se decide realizar un **Análisis de Covarianza (ANCOVA)**. Se tomaron 5 muestras de cada máquina, registrando el diámetro y la resistencia de cada una. Los datos son los siguientes:
+
+```{r echo=TRUE}
+tabla_datos <- tribble(
+  ~y,   ~x,     ~y,    ~x,    ~y,    ~x,
+  "36",  "20",  "40",  "22",  "35",  "21",
+  "41",  "25",  "48",  "28",  "37",  "23",
+  "39",  "24",  "39",  "22",  "42",  "26",
+  "42",  "25",  "45",  "30",  "34",  "21",
+  "49",  "32",  "44",  "28",  "32",  "15"
+)
+
+kbl(tabla_datos, booktabs = TRUE, align = "cccccc") %>%
+  kable_styling(latex_options = c("scale_down", "hold_position")) %>%
+  add_header_above(c("M1" = 2, "M2" = 2, "M3" = 2))
+```
+
+El objetivo es determinar si existe una diferencia significativa en la resistencia promedio del material entre las máquinas, **ajustando por el efecto del diámetro**. Además, se deben verificar los supuestos del modelo ANCOVA utilizando un nivel de significancia $\\alpha = 0.05$.
+
+```{r Datos}
+
+# Datos del problema
+maquina1_y <- c(36,41,39,42,49)
+maquina1_x <- c(20,25,24,25,32)
+maquina2_y <- c(40,48,39,45,44)
+maquina2_x <- c(22,28,22,30,28)
+maquina3_y <- c(35,37,42,34,32)
+maquina3_x <- c(21,23,26,21,15)
+
+datos <- data.frame(
+  y     = c(maquina1_y, maquina2_y, maquina3_y),
+  x     = c(maquina1_x, maquina2_x, maquina3_x),
+  grupo = factor(rep(c("M1","M2","M3"), each = 5))
+)
+```
+
+### Resolución a partir de función "manual"
+
+#### 1) Tabla ANCOVA clásica
+
+La función `ancova_table1` calcula y presenta la tabla ANCOVA tradicional, incluyendo la regresión, tratamientos, error y totales.
+
+```{r echo=TRUE}
+ancova_table1 <- function(y, x, grupo) {
+  datos <- data.frame(y = y, x = x, grupo = factor(grupo))
+  t     <- nlevels(datos$grupo) # Número de tratamientos
+  N     <- nrow(datos)          # Tamaño total de la muestra
+  
+  # Totales y Sumas de Cuadrados Totales (SCT)
+  y_tot  <- sum(datos$y)
+  x_tot  <- sum(datos$x)
+  SCT_yy <- sum(datos$y^2) - y_tot^2 / N
+  SCT_xx <- sum(datos$x^2) - x_tot^2 / N
+  SCT_xy <- sum(datos$x * datos$y) - x_tot * y_tot / N
+  
+  # Sumas de Cuadrados para Tratamientos (SCTr)
+  y_tr   <- tapply(datos$y, datos$grupo, sum) # Suma de y por grupo
+  x_tr   <- tapply(datos$x, datos$grupo, sum) # Suma de x por grupo
+  n      <- N / t # Número de observaciones por grupo (balanceado)
+  SCTr_yy <- sum(y_tr^2) / n - y_tot^2 / N
+  
+  # Sumas de Cuadrados del Error (SCE)
+  SCE_yy <- SCT_yy - SCTr_yy
+  SCE_xx <- SCT_xx - (sum(x_tr^2) / n - x_tot^2 / N)
+  SCE_xy <- SCT_xy - (sum(y_tr * x_tr) / n - x_tot * y_tot / N)
+  
+  # Suma de Cuadrados del Error del modelo
+  SCE_m  <- SCE_yy - (SCE_xy^2 / SCE_xx)
+  
+  # Suma de Cuadrados Total del modelo (reducido)
+  SCE_mp <- SCT_yy  - (SCT_xy^2 / SCT_xx)
+  
+  # Componentes de la Suma de Cuadrados para la tabla ANCOVA
+  sc_reg   <- SCT_xy^2 / SCT_xx # SC de la regresión de y sobre x
+  sc_trat  <- SCE_mp - SCE_m    # SC de tratamientos ajustado por la covariable
+  sc_err   <- SCE_m             # SC del error ajustado
+  sc_tot   <- SCT_yy            # SC total
+  
+  # Grados de Libertad
+  gl_reg   <- 1
+  gl_trat  <- t - 1
+  gl_err   <- N - t - 1
+  gl_tot   <- N - 1
+  
+  # Cuadrados Medios
+  cm_trat  <- sc_trat / gl_trat
+  cm_err   <- sc_err  / gl_err
+  
+  # Estadístico F y p-valor para tratamientos ajustados
+  F_trat   <- cm_trat / cm_err
+  p_val    <- 1 - pf(F_trat, gl_trat, gl_err)
+  
+  # Construcción de la tabla
+  tabla1 <- data.frame(
+    Fuente               = c("Regresión", "Tratamientos", "Error", "Total"),
+    `Suma de cuadrados` = round(c(sc_reg, sc_trat, sc_err, sc_tot), 2),
+    `Grados de libertad` = c(gl_reg, gl_trat, gl_err, gl_tot),
+    `Cuadrado medio`     = c(NA, round(cm_trat, 2), round(cm_err, 2), NA),
+    `F_c`               = c(NA, round(F_trat, 2), NA, NA),
+    `p-valor`            = c(NA, signif(p_val, 3), NA, NA),
+    check.names = FALSE
+  )
+  
+  # Impresión de la tabla con kableExtra
+  kable(
+    tabla1,
+    booktabs = TRUE,
+    caption  = "Tabla ANCOVA clásica con p-valor",
+    escape   = FALSE,
+    align    = "lrrrrr"
+  ) %>%
+    kable_styling(full_width = FALSE)
+}
+
+ancova_table1(datos$y, datos$x, datos$grupo)
+```
+
+#### 2) Tabla de análisis de covarianza como un análisis de varianza "ajustado"
+
+La función `ancova_table2` proporciona una vista más detallada de las sumas de cuadrados y productos, así como las comparaciones de ANOVA simple y ANCOVA ajustado.
+
+```{r echo=TRUE}
+ancova_table2 <- function(y, x, grupo) {
+  datos <- data.frame(y = y, x = x, grupo = factor(grupo))
+  t     <- nlevels(datos$grupo) # Número de tratamientos
+  N     <- nrow(datos)          # Tamaño total de la muestra
+  
+  # Totales y sumas de cuadrados
+  y_tot   <- sum(datos$y)
+  x_tot   <- sum(datos$x)
+  SCT_yy  <- sum(datos$y^2) - y_tot^2 / N
+  SCT_xx  <- sum(datos$x^2) - x_tot^2 / N
+  SCT_xy  <- sum(datos$x * datos$y) - x_tot * y_tot / N
+  
+  # Sumas de cuadrados para Tratamientos
+  y_tr    <- tapply(datos$y, datos$grupo, sum)
+  x_tr    <- tapply(datos$x, datos$grupo, sum)
+  n       <- N / t
+  SCTr_yy <- sum(y_tr^2) / n - y_tot^2 / N
+  SCTr_xx <- sum(x_tr^2) / n - x_tot^2 / N
+  SCTr_xy <- sum(y_tr * x_tr) / n - x_tot * y_tot / N
+  
+  # Sumas de cuadrados del Error y ajustes
+  SCE_yy <- SCT_yy - SCTr_yy
+  SCE_xx <- SCT_xx - SCTr_xx
+  SCE_xy <- SCT_xy - SCTr_xy
+  
+  # Suma de cuadrados del Error después de ajustar por la covariable
+  SCE_m  <- SCE_yy - (SCE_xy^2 / SCE_xx)
+  
+  # Suma de cuadrados Total (ajustada por la regresión)
+  SCE_mp <- SCT_yy  - (SCT_xy^2 / SCT_xx)
+  
+  # ANOVA simple (sin covariable)
+  df1_unadj <- t - 1
+  df2_unadj <- N - t
+  MS_trat_unadj <- SCTr_yy / df1_unadj
+  MS_err_unadj  <- SCE_yy / df2_unadj
+  F_unadj       <- MS_trat_unadj / MS_err_unadj
+  p_unadj       <- 1 - pf(F_unadj, df1_unadj, df2_unadj)
+  
+  # ANCOVA (ajustada)
+  df1_adj <- t - 1
+  df2_adj <- N - t - 1
+  MS_trat_adj <- (SCE_mp - SCE_m) / df1_adj
+  MS_err_adj  <- SCE_m / df2_adj
+  F_adj       <- MS_trat_adj / MS_err_adj
+  p_adj       <- 1 - pf(F_adj, df1_adj, df2_adj)
+  
+  # Construcción de la tabla
+  tabla2 <- data.frame(
+    `Fuente` = c("Tratamientos", "Error", "Total", "Trat. Ajust."),
+    `gl`  = c(df1_unadj, df2_unadj, N - 1, df1_adj),
+    `x`                   = c(round(SCTr_xx, 1), round(SCE_xx, 1), 
+                              round(SCT_xx, 1), NA),
+    `xy`                  = c(round(SCTr_xy, 1), round(SCE_xy, 1), 
+                              round(SCT_xy, 1), NA),
+    `y`                   = c(round(SCTr_yy, 1), round(SCE_yy, 1), 
+                              round(SCT_yy, 1), NA),
+    `y` = c(NA, round(SCE_m, 1), round(SCE_mp, 1), round(SCE_mp - SCE_m, 1)),
+    `gl`       = c(NA, df2_adj, N - 2, df1_adj),
+    `CM`       = c(NA, round(MS_err_adj, 1), NA, round(MS_trat_adj, 1)),
+    `F_c`               = c(round(F_unadj, 2), NA, NA, round(F_adj, 2)),
+    `p-valor`             = c(signif(p_unadj, 2), NA, NA, signif(p_adj, 2)),
+    check.names = FALSE
+  )
+  
+  # Impresión de la tabla con kableExtra
+  kable(
+    tabla2,
+    booktabs = TRUE,
+    caption  = "Tabla Sumas de cuadrados y productos (ajustados) con $F_c$ y p-valor",
+    escape   = FALSE,
+    align    = c("l", rep("c", 9))
+  ) %>%
+    add_header_above(c(
+      " " = 2,
+      "Sumas de cuadrados y productos" = 3,
+      "Ajustados para regresión"      = 3,
+      " " = 2
+    )) %>% kable_styling(latex_options = c("scale_down", "hold_position"))
+}
+
+ancova_table2(datos$y, datos$x, datos$grupo)
+```
+
+### Resolución a partir de funciones de R
+
+Este apartado presenta la resolución del ANCOVA utilizando las funciones nativas de R, `aov()` y `lm()`, así como la función `Anova()` del paquete `car` para obtener diferentes tipos de sumas de cuadrados. También se incluye la verificación de los supuestos del modelo.
+
+#### Modelos ANCOVA y Tablas ANOVA
+
+**1) Tabla ANOVA usando `aov()`**
+
+El comando `aov()` de R proporciona una tabla ANOVA secuencial (Tipo I), donde el orden de los predictores en el modelo afecta los resultados.
+
+```{r echo=TRUE}
+mod_aov <- aov(y ~ x + grupo, data = datos)
+tab_aov <- broom::tidy(mod_aov)
+
+tab_aov_r <- tab_aov %>%
+  rename(
+    Fuente = term,
+    `Grados de Libertad` = df,
+    `Suma de Cuadrados` = sumsq,
+    `Media Cuadrática` = meansq,
+    `Estadístico F` = statistic,
+    `Valor p` = p.value
+  )
+
+kable(tab_aov_r, booktabs = TRUE,
+      caption = "Tabla ANOVA (aov): y ~ x + grupo",
+      digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**2) Tabla ANOVA usando `lm()` y `anova()`**
+
+Similar a `aov()`, el uso de `lm()` seguido de `anova()` también produce una tabla ANOVA secuencial (Tipo I).
+
+```{r, echo=TRUE}
+mod_lm <- lm(y ~ x + grupo, data = datos)
+tab_lm <- broom::tidy(anova(mod_lm))
+
+tab_lm_r <- tab_lm %>%
+  rename(
+    Fuente = term,
+    `Grados de Libertad` = df,
+    `Suma de Cuadrados` = sumsq,
+    `Media Cuadrática` = meansq,
+    `Estadístico F` = statistic,
+    `Valor p` = p.value
+  )
+
+kable(tab_lm_r, booktabs = TRUE,
+      caption = "Tabla ANOVA clásico (lm + anova)",
+      digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**3) Tabla ANOVA Tipo II usando `car::Anova()`**
+
+Para un ANCOVA, las sumas de cuadrados Tipo II son generalmente preferibles, ya que evalúan cada efecto después de ajustar por otros efectos principales (pero no por interacciones). El paquete `car` es útil para esto.
+
+```{r echo=TRUE}
+mod_lm <- lm(y ~ x + grupo, data = datos)
+tab_II <- broom::tidy(Anova(mod_lm, type = "II"))
+
+tab_II_r <- tab_II %>%
+  rename(
+    Fuente = term,
+    `Grados de Libertad` = df,
+    `Suma de Cuadrados` = sumsq,
+    `Estadístico F` = statistic,         
+    `Valor p` = `p.value`      
+  )
+
+kable(tab_II_r, booktabs = TRUE,
+      caption = "Tabla ANOVA Tipo II (car::Anova)",
+      digits = 3) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Interpretación de la tabla ANCOVA
+
+Como el valor-p para el grupo (máquinas) es mayor a  nuestro nivel de significancia ($\alpha = 0.05$) no rechazamos $H_0$ a favor de que la resistencia de la fibra producida no es diferente según la máquina que la fabrica. Indicando al fabricante que las 3 máquinas tienen estadísticamente la misma eficiencia en cuanto a la resistencia del producto.
+
+***
+
+**Verificación de Supuestos del Modelo ANCOVA**
+
+Para que los resultados del ANCOVA sean válidos, se deben cumplir varios supuestos. A continuación, se realizan las pruebas para cada uno con un nivel de significancia $\\alpha = 0.05$.
+
+##### Linealidad
+
+Este supuesto asume una relación lineal entre la covariable (x) y la variable dependiente (y) para cada grupo. Se puede verificar con un gráfico de dispersión y la prueba RESET de Ramsey.
+
+```{r echo=TRUE}
+ggplot(datos, aes(x = x, y = y, color = grupo)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+  labs(
+    title = "Gráfico de Dispersión entre Diámetro (x) y Resistencia (y) por Máquina",
+    x = "Diámetro (en 10^-3 pulgadas)",
+    y = "Resistencia (libras)",
+    color = "Máquina"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+**Prueba RESET de Ramsey para Linealidad**
+
+  * **Hipótesis Nula ($H_0$):** La relación entre la variable dependiente y las variables independientes es lineal (el modelo no presenta errores de especificación funcional).
+  * **Hipótesis Alternativa ($H_1$):** La relación no es lineal (el modelo presenta errores de especificación funcional).
+
+
+```{r echo=TRUE, results='asis'}
+reset_test_result <- resettest(mod_aov)
+reset_test_df <- data.frame(
+  Test = "Ramsey RESET Test",
+  `Estadístico F` = round(reset_test_result$statistic, 3),
+  `gl 1` = reset_test_result$parameter[1],
+  `gl 2` = reset_test_result$parameter[2],
+  `Valor p` = round(reset_test_result$p.value, 3)
+)
+kable(reset_test_df, booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**Conclusión:** Dado que el p-valor (0.217) es mayor que $\alpha = 0.05$, no rechazamos la hipótesis nula. Esto sugiere que **hay suficiente evidencia de linealidad** lo cual es fundamental al momento de realizar un análisis de covarianzas.
+
+***
+
+##### Independencia de los Errores
+
+Este supuesto indica que los residuos del modelo son independientes entre sí. Se puede verificar con la prueba de Durbin-Watson.
+
+**Prueba de Durbin-Watson para Independencia**
+
+  * **Hipótesis Nula ($H_0$):** Los errores del modelo son independientes (no hay autocorrelación).
+  * **Hipótesis Alternativa ($H_1$):** Los errores del modelo no son independientes (hay autocorrelación).
+
+```{r echo=TRUE, results='asis'}
+dw_test_result <- dwtest(mod_aov)
+dw_test_df <- data.frame(
+  Test = "Durbin-Watson Test",
+  `Estadístico F` = round(dw_test_result$statistic, 3),
+  `Valor p` = round(dw_test_result$p.value, 3)
+)
+kable(dw_test_df, booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**Conclusión:** Dado que el p-valor (0.219) es mayor que $\alpha = 0.05$, no rechazamos la hipótesis nula. Esto sugiere que **hay suficiente evidencia de independencia en los residuos**.
+
+-----
+
+##### Homogeneidad de las Pendientes (No Interacción)
+
+Un supuesto crítico del ANCOVA es que la pendiente de la regresión de `y` sobre `x` es la misma para todos los grupos. Esto significa que no hay interacción entre la covariable y el factor.
+
+**Prueba de Interacción (ANOVA Tipo III)**
+
+  * **Hipótesis Nula ($H_0$):** No hay interacción entre la covariable (x) y el factor grupo (las pendientes son homogéneas).
+  * **Hipótesis Alternativa ($H_1$):** Existe interacción entre la covariable (x) y el factor grupo (las pendientes no son homogéneas).
+
+
+```{r echo=TRUE, results='asis'}
+modelointeraccion <- lm(y ~ x * grupo, data = datos)
+interaccion_test_result <- Anova(modelointeraccion, type = 3)
+interaccion_df <- as.data.frame(interaccion_test_result)
+interaccion_df$`p-value` <- round(interaccion_df$`Pr(>F)`, 3)
+interaccion_df <- interaccion_df[row.names(interaccion_df) == "x:grupo", 
+                                 c("Sum Sq", "Df", "F value", "p-value")]
+colnames(interaccion_df) <- c("Suma de Cuadrados", "gl", "Estadístico F", "Valor p")
+
+kable(interaccion_df, booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**Conclusión:** Dado que el p-valor (0.629) es mayor que $\alpha = 0.05$, no rechazamos la hipótesis nula. Esto sugiere que **hay suficiente evidencia de homogeneidad de las pendientes**, lo que valida el supuesto de no interacción.
+
+***
+
+##### Homocedasticidad
+
+La varianza de los residuos debe ser constante en todos los niveles de los predictores. Se puede verificar con la prueba de Breusch-Pagan y un gráfico de residuos vs. valores ajustados.
+
+**Prueba de Breusch-Pagan para Homocedasticidad**
+
+  * **Hipótesis Nula ($H_0$):** La varianza de los errores es constante (homocedasticidad).
+  * **Hipótesis Alternativa ($H_1$):** La varianza de los errores no es constante (heterocedasticidad).
+
+```{r echo=TRUE, results='asis'}
+bpt_test_result <- bptest(mod_lm)
+bpt_test_df <- data.frame(
+  Test = "Breusch-Pagan Test",
+  `Estadístico F` = round(bpt_test_result$statistic, 3),
+  `gl` = bpt_test_result$parameter,
+  `Valor p` = round(bpt_test_result$p.value, 3)
+)
+kable(bpt_test_df, booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+"**Conclusión:** Dado que el p-valor (0.366) es mayor que $\alpha = 0.05$, no rechazamos la hipótesis nula. Esto sugiere que **hay suficiente evidencia de homocedasticidad**.
+
+**Gráfico: Residuos vs. Valores Ajustados**
+
+Este gráfico ayuda a visualizar si la dispersión de los residuos es constante.
+
+```{r echo=TRUE}
+residuos <- residuals(mod_lm)
+plot(fitted(mod_lm), residuos,
+     main = "Residuos vs. Valores Ajustados",
+     xlab = "Valores Ajustados",
+     ylab = "Residuos",
+     pch = 19, col = "blue")
+abline(h = 0, col = "red", lty = 2)
+```
+
+Podemos ver en el gráfico que no existen cambios en la variabilidad de lo residuos lo que afirmaría la hipótesis confirmada con anterioridad en que las varianzas de los residuos son constantes
+
+-----
+
+##### Normalidad de los Residuos
+
+Los residuos del modelo deben seguir una distribución normal. Se puede verificar con la prueba de Shapiro-Wilk.
+
+**Prueba de Shapiro-Wilk para Normalidad**
+
+  * **Hipótesis Nula ($H_0$):** Los residuos del modelo siguen una distribución normal.
+  * **Hipótesis Alternativa ($H_1$):** Los residuos del modelo no siguen una distribución normal.
+
+
+```{r echo=TRUE, results='asis'}
+shapiro_test_result <- shapiro.test(residuos)
+shapiro_test_df <- data.frame(
+  Test = "Shapiro-Wilk Test",
+  `Estadístico F` = round(shapiro_test_result$statistic, 3),
+  `Valor p` = round(shapiro_test_result$p.value, 3)
+)
+kable(shapiro_test_df, booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**Conclusión:** Dado que el p-valor (0.72) es mayor que $\alpha = 0.05$, no rechazamos la hipótesis nula. Esto sugiere que **hay suficiente evidencia de normalidad en los residuos**.
+
+### Interpretación final del problema
+
+Todos los supuestos para realizar el experimento con ANCOVA se comprobaron, además, no se presentan diferencias para la resistencia de la fibra producida por las 3 máquinas de INCHALAM S.A., si se confirma la presencia de relación lineal entre la resistencia de la fibra y su diámetro, lo que indica que a mayor diámetro su resistencia será mayor. 
+
+Cabe destacar, que en nuestra región, la agricultura es una de las principales potencias económicas, en este rubro, las fibras de monofilamento se utilizan principalmente como refuerzo en estructuras agrícolas como invernaderos, sistemas de soporte, y cercas, ofreciendo mayor durabilidad y resistencia que otros materiales, a raíz de esto se indicaría que las 3 máquinas de INCHALAM S.A. entregan un material de misma calidad y que un aspecto importante a medir para conseguir una mejor resistencia es el diámetro de la fibra.
