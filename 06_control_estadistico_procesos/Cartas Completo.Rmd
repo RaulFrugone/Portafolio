@@ -1,0 +1,372 @@
+---
+title: "Formula"
+author: "Cristóbal Belmar Osorio"
+date: "2024-10-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(qcc)
+```
+
+## Ejemplo de Carta $R$
+```{r warning=FALSE}
+# Crear la carta R
+xbar_data <- matrix(c(5, 6, 4, 5, 7, 6, 5, 8, 7, 6,5, 6, 4, 5, 7, 6, 5, 8, 7, 6,5, 6, 4, 5, 7, 6, 5, 8, 7, 6,1, 3, 2, 0, 1,6,10,4,2,1,11,14,20,16,15), ncol  = 5)
+r_chart <- qcc(data  = xbar_data, type = "R")
+
+```
+
+## Ejemplo de Carta $S$
+```{r warning=FALSE}
+# Crear la carta S
+s_chart <- qcc(data = xbar_data, type = "S")
+
+
+```
+
+## Ejemplo de Carta $P$
+
+```{r message=FALSE, warning=FALSE}
+# Cargar la librería qcc
+library(qcc)
+
+# Datos de ejemplo: proporción de defectos en 10 muestras
+n <- c(10, 50, 50, 50, 50,50, 50, 50, 50, 50,50, 50, 100, 80, 90)  # tamaño de cada muestra
+x <- c(1, 3, 2, 0, 1,6,10,4,2,1,11,14,20,16,15)       # número de defectos
+datos<-data.frame(x,n)
+
+# Crear la carta p
+p_chart <- qcc(data= x, type = "p",sizes = n)
+```
+
+## Ejemplo de Carta $NP$
+
+```{r warning=FALSE}
+# Datos de ejemplo: número de defectos en 10 muestras
+n_np <- rep(50, 10)  # tamaño constante de la muestra
+x_np <- c(1, 3, 2, 0, 1, 4, 2, 1, 3, 2)  # número de defectos
+
+# Crear la carta np
+np_chart <- qcc(data = x_np, type = "np", sizes = n_np)
+
+
+```
+
+## Ejemplo de Carta $C$
+
+```{r warning=FALSE}
+# Datos de ejemplo: número de defectos en diferentes unidades
+x_c <- c(2, 5, 3, 0, 1, 2, 4, 5, 1, 3)  # número de defectos por unidad
+
+# Crear la carta c
+c_chart <- qcc(data = x_c, type = "c")
+
+```
+
+## Ejemplo de Carta $U$
+
+```{r warning=FALSE}
+# Datos de ejemplo: número de defectos por unidad en diferentes muestras
+x_u <- c(2, 5, 3, 0, 1, 2, 4, 5, 1, 3)  # número de defectos
+n_u <- c(100, 100, 100, 100, 100, 100, 100, 100, 100, 100)  # tamaño de cada muestra
+
+# Crear la carta u
+u_chart <- qcc(data  = x_u, type = "u",sizes = n_u)
+```
+
+## Diagrama de pareto:
+
+```{r warning=FALSE}
+defect = c("Defecto A", "Defecto B", "Defecto C", "Defecto D", "Defecto E")
+frequencya = c("defecto A"=30, "defecto B"=20,"defecto C"= 25,"defecto D"= 15,"defecto E"= 10)
+
+pareto.chart(data = frequencya)
+```
+
+### **Otra forma de diagrama de pareto:**
+
+```{r message=FALSE, warning=FALSE}
+# Cargar las librerías necesarias
+library(ggplot2)
+library(dplyr)
+
+# Datos de ejemplo: tipos de defectos y sus frecuencias
+data <- data.frame(
+  defect = c("Defecto A", "Defecto B", "Defecto C", "Defecto D", "Defecto E"),
+  frequency = c(30, 20, 25, 15, 10)
+)
+
+# Calcular el porcentaje acumulado
+data <- data %>%
+  arrange(desc(frequency)) %>%
+  mutate(cumulative = cumsum(frequency),
+         percentage = cumulative / sum(frequency) * 100)
+
+# Crear el diagrama de Pareto
+ggplot(data, aes(x = reorder(defect, -frequency), y = frequency)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_line(aes(y = cumulative), group = 1, color = "red", size = 1) +  # Usar 'cumulative' para la línea
+  geom_point(aes(y = cumulative), color = "red", size = 3) +  # Usar 'cumulative' para los puntos
+  scale_y_continuous(sec.axis = sec_axis(~., name = "Porcentaje acumulado")) +
+  labs(title = "Diagrama de Pareto",
+       x = "Tipo de defecto",
+       y = "Frecuencia",
+       caption = "Fuente: Datos simulados") +
+  theme_minimal() +
+  scale_y_continuous(name = "Frecuencia", 
+                     sec.axis = sec_axis(~ ./sum(data$frequency) * 100, 
+                                         name = "Porcentaje acumulado"))
+
+```
+
+## Diagrama de tallo y hoja
+
+```{r message=FALSE, warning=FALSE}
+data(pistonrings)
+attach(pistonrings)
+stem(diameter) # Hay que tener cuidado, a veces la entrega mal
+```
+
+## Diagrama de Causa y Efecto
+
+```{r warning=FALSE}
+library(qcc)
+# Se pueden poner más causas, pero si se ponen más efectos, se solapan
+cause.and.effect( 
+  cause = 
+    list(
+      Maquinaria = c("Equipos"   , "Fallos"),
+      Personal   = c("Ausencia"  , "Rotación"),
+      Materiales = c("Perdidas"  , "Merma"),
+      Medicion   = c("Lecturas"  , "Estabilidad"),
+      Metodos    = c("Protocolos", "Actividades"),
+      Ambiente   = c("Limpieza"  , "Espacios")),
+  
+  effect = c("Dispersion en mediciones")
+  )
+```
+
+## Modificaciones cartas de control
+
+```{r warning=FALSE}
+data(pistonrings)
+attach(pistonrings)
+
+# hacer grupos
+diameter <- qcc.groups(diameter, sample)
+############################################################################
+############################   Modificaciones   ############################
+############################################################################
+
+# añadir límites con sigma = 2
+q <- qcc(diameter[1:25,], type="xbar", newdata=diameter[26:40,], plot=FALSE)
+(warn.limits <- limits.xbar(q$center, q$std.dev, q$sizes, 2))
+plot(q, restore.par = FALSE)
+abline(h = warn.limits, lty = 3, col = "blue")
+
+
+# Cambio de parámetros
+qcc(diameter[1:25,], type="xbar", newdata=diameter[26:40,], nsigmas=2)
+qcc(diameter[1:25,], type="xbar", newdata=diameter[26:40,], confidence.level=0.99)
+
+# newdata para ampliar la carta con nuevos datos
+qcc(diameter[1:25,], type="xbar", newdata=diameter[26:40,])
+```
+
+
+## Carta R movil
+
+```{r warning=FALSE}
+# Datos de viscosidad de los lotes
+Cc <- c(33.75, 33.05, 34.00, 33.81, 33.46, 34.92, 33.68, 33.27, 
+                33.49, 32.20, 33.62, 33.00, 33.54, 33.12, 33.84)
+shapiro.test(Cc)
+#Según tabla tenemos:
+A <- 1.88
+d2 <- 1.128
+D3 <- 0
+D4 <- 3.267
+
+#promedios y rangos
+rangos <- abs((head(Cc, -1) - tail(Cc, -1)))
+prom_rangos <- mean(rangos)
+
+
+# Calculando límites de rangos móviles
+rango_movil_L_superior <- prom_rangos*D4
+rango_movil_media <- prom_rangos
+rango_movil_L_inferior <- D3
+
+plot(rangos, type = "o",
+     ylim = c(rango_movil_L_inferior-1,rango_movil_L_superior+1), 
+     pch = 16, col = "blue", 
+     main = "Carta de Rangos Móviles para\n Observaciones Individuales", 
+     ylab = "",
+     xlab = "")
+
+abline(h=rango_movil_L_superior, col = "red",lwd = 2,lty = 2)
+abline(h=rango_movil_media, col = "green",lwd = 2,lty = 2)
+abline(h=rango_movil_L_inferior, col = "red",lwd = 2,lty = 2)
+
+
+text(x = 1:length(rangos)+0.5, y = rangos, labels = round(rangos,1), pos = 3, col = "black",cex= 0.625)
+
+text(x = length(Cc)/2, y = c(rango_movil_L_superior,rango_movil_L_inferior-0.2), labels = c("LCS","LCI"), pos = 3, col = "black",cex= 0.625)
+
+text(x = length(Cc)/2, y = c(rango_movil_L_superior*1.05,rango_movil_L_inferior-0.35), labels = round(c(rango_movil_L_superior,rango_movil_L_inferior),3), pos = 3, col = "black",cex= 0.625)
+
+```
+
+## Cartas Medias moviles
+
+```{r}
+library(ggplot2)
+# Generación de datos de ejemplo
+set.seed(123)
+datos <- rnorm(30, mean = 50, sd = 2)  # 30 observaciones individuales
+
+# Tamaño de la muestra para el rango móvil
+w <- 2
+# Calcular los rangos móviles para cada par de observaciones consecutivas
+rangos_moviles <- abs(diff(datos, lag = w))
+
+# Calcular el rango móvil promedio (según la fórmula de la imagen)
+rango_movil_promedio <- sum(rangos_moviles) / (length(datos) - (w + 1))
+media_datos <- mean(datos)
+# Factor A2 para n = 2
+A2 <- 1.88
+
+# Límites de control para la carta de medias móviles
+LCS_mm <- media_datos + A2 * rango_movil_promedio
+LCI_mm <- media_datos - A2 * rango_movil_promedio
+
+# Crear un data frame para el gráfico de medias móviles
+df_mm <- data.frame(
+  Observacion = 1:length(datos),
+  Valores = datos,
+  FueraLimite = ifelse(datos > LCS_mm | datos < LCI_mm, "Fuera de Límite", "Dentro de Límite")
+)
+
+# Gráfico de medias móviles con límites de control y puntos fuera de límite en color diferente
+ggplot(df_mm, aes(x = Observacion, y = Valores)) +
+  geom_line(color = "blue") +
+  geom_point(aes(color = FueraLimite), size = 3) +
+  geom_hline(yintercept = media_datos, color = "green", linetype = "dashed") +
+  geom_hline(yintercept = LCS_mm, color = "red", linetype = "dashed") +
+  geom_hline(yintercept = LCI_mm, color = "red", linetype = "dashed") +
+  geom_text(data = subset(df_mm, FueraLimite == "Fuera de Límite"),
+            aes(label = Observacion), vjust = -1, color = "red", size = 3.5) +
+  labs(title = "Carta de Medias Móviles", y = "Valores") +
+  scale_color_manual(values = c("Dentro de Límite" = "blue", "Fuera de Límite" = "red")) +
+  theme_test()
+
+```
+
+
+## Cartas cusum
+
+La carta CUSUM (Cumulative Sum Control Chart) es una herramienta de control estadístico usada para monitorear cambios pequeños en la media y la variabilidad de un proceso.
+
+**Para la media**: Suma acumulativamente las desviaciones respecto a una media objetivo, lo que permite detectar cambios sutiles en la tendencia del proceso.\newline
+**Para la variabilidad**: Monitorea cambios en la dispersión de los datos, alertando sobre variaciones inusuales en la consistencia del proceso.\newline
+
+Las cartas CUSUM deben cumplir ciertos supuestos los cuales son:
+
+Para realizar este tipo de carta, antes debe de cumplir los siguientes supuestos:
+
+- Normalidad en los datos.
+- Independencia de las observaciones.
+- Desviación conocida o una estimación.
+- Media conocida o estimación.
+- Cartas de Shewart bajo control.
+     
+
+
+
+## Ejemplo de Carta *Cusum para la media*
+
+
+```{r}
+
+# Simular datos de rendimiento de trigo
+set.seed(123)
+n_semanas <- 100            
+media_estable <- 3          
+desviacion <- 0.5           
+
+rendimiento_estable <- rnorm(60, mean = media_estable, sd = desviacion)
+media_disminuida <- 2.5      
+rendimiento_bajo <- rnorm(40, mean = media_disminuida, sd = desviacion)
+
+rendimiento_datos <- c(rendimiento_estable, rendimiento_bajo)
+
+# Aplicar carta CUSUM
+cusum_rendimiento <- cusum(rendimiento_datos,
+                           center = media_estable,
+                           std.dev = desviacion,
+                           decision.interval = 5,
+                           se.shift = 0.5,
+                           title="CUSUM para el rendimiento de cosechas de trigo")
+```
+
+
+
+
+
+## Ejemplo de Carta *Cusum para la variabilidad*
+
+```{r}
+# Fijar semilla para la reproducibilidad
+set.seed(123)
+
+# Simular datos
+# Primeros 30 datos con desviación estándar de 2 ohmios
+resistencias_1 <- rnorm(30, mean = 100, sd = 2)
+
+# Últimos 20 datos con desviación estándar de 4 ohmios
+resistencias_2 <- rnorm(20, mean = 100, sd = 4)
+
+# Combinar las dos series
+resistencias_totales <- c(resistencias_1, resistencias_2)
+
+resistencia_estandarizada<-(resistencias_totales-(mean(resistencias_totales)))/sd(resistencias_totales)
+
+resistencia_varia<-(abs(resistencia_estandarizada)-0.822)/0.349
+# Crear grupos de tamaño 1 para análisis de variabilidad
+grupo_resistencias <- matrix(resistencia_varia, ncol = 1)
+
+# Generar la carta de control CUSUM de variabilidad (monitorizando la desviación estándar)
+# Supongamos que el valor de referencia de la desviación estándar es 2 ohmios
+cusum_variabilidad <- cusum(grupo_resistencias,
+                            sizes = 1, target = 100,
+                            std.dev = 2, decision.interval = 5,
+                            se.shift = 1,title="CUSUM de Variabilidad para la Producción de Resistencias")
+
+# Mostrar el gráfico CUSUM de variabilidad
+plot(cusum_variabilidad,title="CUSUM de Variabilidad para la Producción de Resistencias")
+```
+
+## Capacidad
+
+```{r}
+
+# Generación de datos de ejemplo para una carta X-barra
+set.seed(123)
+datos <- matrix(rnorm(100, mean = 10, sd = 1), ncol = 5)  # 20 subgrupos de tamaño 5
+
+# Creación de la carta X-barra
+xbar_chart <- qcc(datos, type = "xbar", title = "Carta X-barra")
+
+# Evaluación de la capacidad del proceso
+# Definimos límites de especificación inferior y superior (LSL y USL)
+LSL <- 8  # Límite de especificación inferior
+USL <- 12 # Límite de especificación superior
+
+# Cálculo de la capacidad del proceso
+capacidad <- process.capability(xbar_chart, spec.limits = c(LSL, USL))
+
+# Imprimir resultados
+capacidad
+```
