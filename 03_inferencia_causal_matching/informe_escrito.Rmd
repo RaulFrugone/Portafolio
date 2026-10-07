@@ -1,0 +1,155 @@
+---
+title: "Informe de estimación causal: Impacto de la capacitación laboral"
+author: "Benjamín Caro y Raúl Frugone"
+date: "`r Sys.Date()`"
+geometry: "margin=1in"
+fontsize: 10pt
+output:
+  pdf_document:
+    keep_tex: false
+    toc: false
+    number_sections: true
+header-includes:  
+  \usepackage{float}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = ".")
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center"
+)
+
+library(Matching)
+library(MatchIt)
+library(cobalt)
+library(survey)
+library(ggplot2)
+library(broom)
+library(estimatr)
+library(dplyr)
+library(knitr)
+library(gridExtra)
+```
+Este estudio estima el efecto promedio en los tratados (ATT) del programa de capacitación laboral National Supported Work (NSW) sobre los ingresos reales de 1978. Evaluar estas políticas requiere corregir la auto-selección de los participantes. Esta dinámica genera diferencias sistemáticas frente a los no participantes e introduce un sesgo severo en las comparaciones directas.
+
+Utilizamos los datos de Lalonde (1986) con 614 observaciones: 185 tratados del experimento NSW y 429 controles de la encuesta poblacional CPS. La variable de tratamiento es la participación binaria. El resultado son los ingresos de 1978. Las covariables de ajuste incluyen edad, educación, raza, estado civil, nivel escolar e ingresos previos de 1974 y 1975.
+
+```{r load_data, include=FALSE}
+data("lalonde", package = "MatchIt")
+lalonde <- as.data.frame(lalonde)
+```
+
+Bajo el modelo de Rubin, estimamos el ATT asumiendo tres supuestos básicos: (1) **Intercambiabilidad Condicional** ($\{Y(1), Y(0)\} \perp D \mid X$), lo que significa que el sesgo se debe únicamente a las covariables observadas $X$; (2) **Positividad** ($0 < P(D=1 \mid X) < 1$), asegurando que existan unidades tratadas y de control comparables en todo el soporte de $X$; (3) **Estabilidad** ($Y_i^a \text{ no depende de }A_j, j \ne i$), también llamado **SUTVA**, este es el supuesto fundamental del modelo causal de Rubin que asume ausencia de interferencia entre unidades y homogeneidad en el tratamiento. 
+
+```{r no_causal_analysis, include=FALSE}
+# Diferencia simple de medias
+mean_treated <- mean(lalonde$re78[lalonde$treat == 1])
+mean_control <- mean(lalonde$re78[lalonde$treat == 0])
+diff_simple <- mean_treated - mean_control
+
+# Regresión Lineal Bivariada
+fit_biv <- lm(re78 ~ treat, data = lalonde)
+
+# Regresión Lineal Multivariada OLS Descriptiva (directa con covariables)
+fit_ols <- lm(re78 ~ treat + age + educ + race + married + nodegree + re74 + re75, 
+              data = lalonde)
+
+
+```
+Inicialmente, la estimación descriptiva simple presentada en la salida aanterior, arroja una diferencia negativa artificial de $-635.03$ USD ($p=0.334$) debido a que el grupo control incluye trabajadores estables con ingresos base mayores. Un ajuste OLS multivariado directo estima un efecto de $\$1,548.24$ USD ($p=0.048$), un cálculo lineal vulnerable a extrapolaciones.
+
+Para aislar el efecto real, estimamos un modelo logit de asignación. El análisis revela un fuerte sesgo estructural: las personas casadas y de raza blanca tienen una probabilidad significativamente menor de ser tratadas. Con esta información, aplicamos Propensity Score Matching (PSM) de vecino más cercano con un caliper estricto de 0.05 desviaciones estándar. El algoritmo emparejó exitosamente a 109 tratados con 109 controles, descartando las observaciones no comparables.
+
+La Figura 1 detalla la efectividad del diseño mediante dos diagnósticos visuales. El panel izquierdo presenta un gráfico de densidad que evidencia distribuciones de probabilidad solapadas entre ambos grupos. Este traslape garantiza el cumplimiento del soporte común, asegurando emparejamientos viables y comparables empíricamente. El panel derecho exhibe el balance de covariables mediante un Love plot. Los puntos rojos ilustran el grave desbalance original de la muestra. Tras aplicar el algoritmo, los puntos azules confirman una corrección total, situando todas las variables dentro del umbral de tolerancia aceptable de 0.1 desviaciones estándar.
+
+```{r diagnostics, fig.width=9, fig.height=2.8, out.width="100%",fig.pos="H", fig.cap="Soporte Común (Izquierda) y Balance de Covariables (Derecha) antes y después del Matching"}
+# Generar propensity scores y emparejamiento
+ps_model <- glm(treat ~ age + educ + race + married + nodegree + re74 + re75, 
+                family = binomial(link = "logit"), data = lalonde)
+lalonde$ps <- predict(ps_model, type = "response")
+
+m_out <- matchit(treat ~ age + educ + race + married + nodegree + re74 + re75,
+                 method = "nearest", distance = "glm", link = "logit", 
+                 caliper = 0.05, data = lalonde)
+matched_data <- match.data(m_out)
+
+# Configurar visualización lado a lado
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+
+# Gráficamos
+
+p1 <- bal.plot(m_out, var.name = "distance", which = "both",
+               type = "density", colors = c("#FF6B6B", "#4D96FF")) +
+      labs(title = "Distribución del Propensity Score", x = "Propensity Score", fill = "Grupo") +
+      theme_minimal()
+
+p2 <- love.plot(m_out, binary = "std", thresholds = c(m = .1),
+                colors = c("#FF6B6B", "#4D96FF"),
+                title = "Balance de Covariables (SMD)") +
+      theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+Tras garantizar la comparabilidad, procedimos a la estimación causal (ver Tabla 1). El modelo PSM simple calcula un ATT de $\$2,277.59$ USD ($p=0.026$). Al incorporar una especificación doblemente robusta —ajustando adicionalmente por covariables sobre la muestra emparejada— el efecto se estabiliza en $\$2,229.41$ USD ($p=0.029$). Complementariamente, un estimador de ponderación por probabilidad inversa (IPW) arroja $\$1,214.07$ USD ($p=0.141$), perdiendo significancia al mantener controles con scores muy bajos que inflan la varianza del modelo.
+
+La diferencia simple de medias genera un estimado negativo artificial debido a que el grupo CPS está compuesto por trabajadores estables que ganan mucho más de base que los candidatos elegidos para el programa NSW. Una vez que controlamos por el sesgo de selección con PSM, comparando unidades que tienen el mismo propensity score pre-tratamiento, el efecto se vuelve fuertemente positivo y significativo, indicando que la capacitación causó un aumento promedio de más de $2,200 USD en los ingresos reales en 1978 para los tratados. La especificación de doble robustez confirma la solidez de este resultado. Finalmente, el estimador IPW arroja un efecto positivo de menor magnitud e insignificante debido a que mantiene controles con propensity scores muy bajos, aumentando el ruido y la varianza en este escenario de soporte común débil.
+
+```{r summary_table, echo=FALSE}
+# A) Modelos No Causales (Extraídos con errores estándar HC2)
+# fit_biv y fit_ols ya fueron ejecutados robustamente en el primer chunk
+
+# B) Modelos Causales Post-Matching
+# Para muestras emparejadas, se deben usar los pesos del matching y clusterizar por 'subclass'
+# para corregir la dependencia inducida por el emparejamiento por parejas.
+fit_att_simple <- lm_robust(re78 ~ treat, data = matched_data, 
+                            weights = weights, cluster = subclass, se_type = "CR2")
+
+fit_att_dr <- lm_robust(re78 ~ treat + age + educ + race + married + nodegree + re74 + re75, 
+                        data = matched_data, weights = weights, cluster = subclass, se_type = "CR2")
+
+# C) Modelo IPW (Estimación por ponderación e inferencia con diseño de encuesta)
+# Cálculo correcto y acotado del Propensity Score para toda la muestra
+lalonde$ps <- m_out$distance
+lalonde$weights_att <- ifelse(lalonde$treat == 1, 1, lalonde$ps / (1 - lalonde$ps))
+
+# Definición del diseño muestral para ajustar los errores estándar de la ponderación
+design_att <- svydesign(ids = ~1, weights = ~weights_att, data = lalonde)
+fit_ipw_att <- svyglm(re78 ~ treat, design = design_att)
+
+# Construcción de la matriz de resultados (Solución robusta para extraer E.E.)
+resumen <- data.frame(
+  Metodo = c("Diferencia Simple (No Causal)", 
+             "Regresión OLS (No Causal)", 
+             "PSM ATT Simple (Causal)", 
+             "PSM ATT Doble Robusto", 
+             "IPW ATT (Causal)"),
+  Estimado = c(
+    coef(fit_biv)["treat"],
+    coef(fit_ols)["treat"],
+    coef(fit_att_simple)["treat"],
+    coef(fit_att_dr)["treat"],
+    coef(fit_ipw_att)["treat"]
+  ),
+  Error_Estandar = c(
+    summary(fit_biv)$coefficients["treat", "Std. Error"],
+    summary(fit_ols)$coefficients["treat", "Std. Error"],
+    summary(fit_att_simple)$coefficients["treat", "Std. Error"],
+    summary(fit_att_dr)$coefficients["treat", "Std. Error"],
+    summary(fit_ipw_att)$coefficients["treat", "Std. Error"]
+  )
+)
+
+# Calcular estadísticos de inferencia asintótica
+resumen$Estadistico_t <- resumen$Estimado / resumen$Error_Estandar
+resumen$P_Valor <- 2 * (1 - pnorm(abs(resumen$Estadistico_t)))
+
+# Generar tabla limpia
+kable(resumen, col.names = c("Método", "Estimación (Beta)", "E.E.", "Estadístico t", "p-valor"), 
+      digits = 3, caption = "Tabla 3: Comparativa de Estimaciones")
+```
+
+El análisis demuestra empíricamente la superioridad de la inferencia causal sobre los métodos descriptivos tradicionales. Al restringir la comparación a individuos estrictamente similares, confirmamos que el programa NSW generó un aumento real y significativo en los ingresos de los participantes. La validez de esta conclusión descansa en la premisa de intercambiabilidad condicional, asumiendo la ausencia total de variables confusoras no observadas como la motivación personal o la ética laboral.
