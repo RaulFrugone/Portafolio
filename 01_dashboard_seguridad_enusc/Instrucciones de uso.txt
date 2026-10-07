@@ -1,0 +1,7 @@
+Para una correcta implementación del código, se debe cumplir con lo siguiente:
+
+1. Asegurarse de tener todas las librerías tanto del .R como de .Rmd instaladas.
+
+2. Seleccionar el directorio correspondiente a la carpeta en donde se tengan todos los archivos.
+
+3. Para la descarga del informe es necesario haber cursado por todas las pestañas del dashboard

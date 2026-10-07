@@ -1,0 +1,2102 @@
+---
+title: "Informe de Seguridad Pública"
+author: "Diego Rocha Retamal & Raúl Frugone Zaror"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  pdf_document:
+    dev: cairo_pdf
+    latex_engine: xelatex
+    toc: true
+params:
+  data: NULL
+  plot_paths: !r list()
+  map_data: NULL
+  enc_region: NULL
+  enc_rpc: NULL
+  rph_sexo: NULL
+  rph_edad: NULL
+  P_AUMENTO_: NULL
+  P_INSEG_LUGARES_: NULL
+  P_INCIVILIDADES_: NULL
+  P_EXPOS_DELITO: NULL
+  P_DELITO_PRONOSTICO__: NULL
+  EV_CONFIA_: NULL
+  region_seleccionada_input: NULL
+  comuna_seleccionada_input: NULL
+  sexo_seleccionado_input: NULL
+  edad_seleccionada_input: NULL
+  resultados_acm_param: NULL
+  df_inc_processed_param: NULL
+  acm_plot_param: NULL
+  mca_scree_plot_param: NULL
+  tabla_entropia_param: NULL
+mainfont: Arial
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = 'center')
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(sf)
+library(RColorBrewer)
+library(treemapify)
+library(forcats)
+library(scales)
+library(tidyr)
+library(klaR)
+library(cluster)
+library(DescTools)
+library(kableExtra)
+library(FactoMineR)
+library(factoextra)
+library(cluster)
+library(klaR)
+library(plotly)
+library(naniar)
+library(DT)
+library(webshot2)
+```
+
+## Filtros Aplicados
+
+```{r filters_summary, results='asis'}
+# Función auxiliar robusta para obtener nombres de las selecciones
+get_names <- function(codes, map, all_text = "Todas") {
+  if (is.null(codes) || length(codes) == 0) {
+    return(all_text)
+  }
+  
+  # Asegurar que los códigos son caracteres para el mapeo
+  codes_char <- as.character(codes)
+  names_found <- unname(map[codes_char])
+  
+  # Filtrar NAs que resultan de códigos no encontrados
+  names_found <- names_found[!is.na(names_found)]
+  
+  if (length(names_found) == 0) {
+    return(all_text)
+  }
+  return(paste(names_found, collapse = ", "))
+}
+
+cat(paste("- **Región(es):**", get_names(params$region_seleccionada_input, params$enc_region), "\n"))
+
+# Determinar comunas disponibles según la región seleccionada
+comunas_disponibles <- params$enc_rpc
+if (!is.null(params$region_seleccionada_input) && length(params$region_seleccionada_input) > 0) {
+  comunas_disponibles <- params$enc_rpc[
+    substr(names(params$enc_rpc), 1, nchar(names(params$enc_rpc)) - 3) %in% params$region_seleccionada_input
+  ]
+}
+cat(paste("- **Comuna(s):**", get_names(params$comuna_seleccionada_input, comunas_disponibles), "\n"))
+
+sexo_label <- get_names(params$sexo_seleccionado_input, setNames(c("Hombre", "Mujer"), c("1", "2")), all_text = "Ambos")
+cat(paste("- **Sexo:**", sexo_label, "\n"))
+
+cat(paste("- **Grupo(s) Etario(s):**", get_names(params$edad_seleccionada_input, params$rph_edad), "\n"))
+
+```
+
+# Resumen ejecutivo
+
+El informe aborda la creciente percepción de inseguridad en Chile a partir de la ENUSC 2023. El problema consiste en entender cómo se distribuye el temor al delito según factores sociodemográficos y territoriales, para orientar políticas públicas y recursos policiales. Se aplicó un flujo de Business Intelligence basado en reducción de dimensionalidad con Análisis de Correspondencias Múltiples (MCA) y segmentación k-modes, técnica idónea para variables categóricas. El modelo reveló dos perfiles ciudadanos bien diferenciados (silhouette ≈ 0,57): uno con alta victimización, bajo nivel de confianza institucional y mayor sensación de riesgo; y otro con menor exposición y mayor confianza. Entre los hallazgos sobresale que 89 % percibe un aumento de la delincuencia a nivel país y 78 % a nivel comuna, mientras la tasa de denuncias apenas bordea el 38 %. Se recomienda focalizar intervenciones urbanas en puntos críticos (terminales, transporte público y plazas), reforzar canales de denuncia y campañas de confianza institucional, priorizando el cluster más vulnerable
+
+Este informe analiza la percepción de inseguridad, victimización y confianza institucional en la población urbana chilena a partir de la Encuesta Nacional Urbana de Seguridad Ciudadana (ENUSC 2023), levantada por el Instituto Nacional de Estadísticas (INE). El marco muestral abarca 146 294 personas y 1 301 variables; de ellas se seleccionaron 36 preguntas clave y, a partir de los ítems sobre experiencias delictuales, se construyó la variable “víctima”.
+
+La ENUSC considera las 136 comunas urbanas del país como estratos. En cada estrato se eligieron conglomerados de aproximadamente 200 viviendas mediante probabilidad proporcional al tamaño (PPT) y, posteriormente, se seleccionaron sistemáticamente entre 12 y 16 hogares por unidad primaria de muestreo.
+
+Para abordar la percepción ciudadana sobre la delincuencia, se requiere un enfoque multivariante capaz de integrar información categórica y revelar patrones interpretables. Por ello se combinó un Análisis de Correspondencias Múltiples (MCA), que condensa la variabilidad asociativa en ejes latentes con un porcentaje de varianza total explicada (Greenacre, 2007) junto a un clustering k‑modes, algoritmo específico para datos categóricos que emplea la distancia de coincidencia simple y reemplaza medias por las modas (Huang, 1997). Esta estrategia, validada por Espinoza Contreras et al. (2024) en estudios regionales de criminalidad, facilita la interpretación sociológica de los factores de temor y la segmentación práctica de la población para diseñar políticas focalizadas.
+
+El tamaño muestral (aproximadamente 146000 casos) garantiza estabilidad en las estimaciones, mientras que la evaluación interna (Silueta) confirma que dos clusters capturan patrones sustantivos sin sobreajuste. La arquitectura analítica cumple, además, los supuestos de independencia entre observaciones, homogeneidad de escala y baja multicolinealidad categórica.
+
+***
+
+**Pregunta de investigación**
+
+¿Cómo varía la percepción de inseguridad ante los delitos en Chile según características sociodemográficas y territoriales, y qué patrones pueden identificarse mediante el análisis de agrupación de los datos de la ENUSC?
+
+***
+
+**Objetivo general**
+
+Analizar la percepción de inseguridad frente a los delitos en la población chilena, considerando factores como edad, sexo, región y comuna, mediante herramientas interactivas y técnicas de análisis multivariado.
+
+***
+
+**Objetivos específicos**
+
+- Explorar la relación entre la percepción de inseguridad y la confianza institucional.
+- Identificar los contextos y situaciones en que las personas se sienten más inseguras según su perfil sociodemográfico.
+- Aplicar técnicas de análisis de agrupación para determinar la existencia de grupos homogéneos en la percepción de inseguridad.
+
+***
+
+En resumen, este proyecto se alinea con los objetivos estratégicos del área de Seguridad Pública y las métricas clave solicitadas, las cuales son el índice de percepción de inseguridad, tasa de victimización, tasa de denuncia y nivel de confianza institucional. Desarrollado en el marco del curso de Business Intelligence, el estudio utiliza un dataset depurado con 36 variables de la ENUSC 2023 más una variable compuesta de victimización, extraídas de un universo inicial de aproximadamente 146000 encuestados y 1301 variables. Este núcleo de datos garantiza trazabilidad operativa y permite construir dashboards interactivos que respalden la toma de decisiones tácticas y la asignación eficiente de recursos.
+
+
+```{r df_resumen, message=FALSE, warning=FALSE, include=FALSE}
+df_resumen <- params$data
+```
+
+
+\newpage
+
+## EDA
+
+Un análisis exploratorio que se concentre en la descripción de la muestra, en el análisis de datos faltantes y en medir la asociación mediante la V de Cramer puede ser suficiente para una base de datos categórica, como es el caso, debido a que aborda los dos pilares de la calidad y la estructura de la información cualitativa. Primero, explorar patrones de valores ausentes permite identificar sesgos de muestreo, dependencias en la captura de datos o categorías problemáticas que podrían distorsionar cualquier análisis posterior. Segundo, la V de Cramer ofrece una medida estandarizada de la fuerza de la relación entre pares de variables, revelando cuáles combinaciones de categorías están realmente vinculadas y cuáles son independientes. Con estos dos pasos se obtiene una visión clara de dónde existen vacíos informativos y de cuáles asociaciones merecen un modelado o una profundización adicional, sin necesidad de recurrir a herramientas diseñadas para datos numéricos.
+
+**Descripción de los datos**
+
+```{r pies_categoricas, fig.width=7, fig.height=6,  warning=FALSE, message=FALSE, echo=FALSE}
+library(ggplot2)
+library(gridExtra)
+
+mi_df <- params$data
+
+crear_pie <- function(tabla, var, titulo = var) {
+  if (!var %in% names(tabla)) stop(paste0("'", var, "' no existe"))
+  
+  vals <- table(tabla[[var]], useNA = "no")
+  df_plot <- data.frame(
+    Category   = names(vals),
+    Count      = as.integer(vals),
+    Percentage = round(100 * as.integer(vals) / sum(vals), 1),
+    stringsAsFactors = FALSE
+  )
+  
+  ggplot(df_plot, aes(x = "", y = Count, fill = Category)) +
+    geom_bar(stat = "identity", width = 1.2) +      # pie “más gordo”
+    coord_polar("y", start = 0) +                          
+    labs(title = titulo) +
+    theme_void(base_size = 10) +                     # base de texto más pequeño
+    theme(
+      legend.position   = "none",
+      plot.title        = element_text(size = 6),   # títulos aún más pequeños
+      plot.margin       = margin(2, 2, 2, 2, "mm")  # menos margen extra
+    )+ 
+scale_fill_manual(values = c(
+    "1"   = "pink",         # Hombre / Aumentó / Muy inseguro/a / Nunca / Sí / Mucha confianza
+    "2"   = "skyblue",      # Mujer  / Se mantuvo / Inseguro/a    / Casi nunca / No / Bastante confianza
+    "3"   = "lightgreen",   # Disminuyó / Seguro/a / Ocasionalmente / Poca confianza
+    "4"   = "darkseagreen", # Muy seguro/a / Casi siempre / Nada de confianza
+    "5"   = "purple",         # Siempre
+    "6"   = "thistle",      # 60–69 años  
+    "7"   = "tan",          # 70 años o más
+    "0"   = "yellow",  # 0–14 años
+    "88"  = "gray80",       # No sabe
+    "99"  = "gray50",       # No responde
+    "85"  = "black"        # No aplica
+))
+
+}
+
+vars <- c(
+  "rph_sexo", "rph_edad", "P_AUMENTO_COM", "P_AUMENTO_PAIS",
+  "P_INSEG_LUGARES_1", "P_INSEG_LUGARES_3", "P_INSEG_LUGARES_7",
+  "P_INSEG_LUGARES_8", "P_INSEG_LUGARES_10", "P_INSEG_LUGARES_12",
+  "P_INSEG_LUGARES_16", "P_INCIVILIDADES_4", "P_INCIVILIDADES_6",
+  "P_INCIVILIDADES_7", "P_EXPOS_DELITO",
+  "P_DELITO_PRONOSTICO__1", "P_DELITO_PRONOSTICO__2",
+  "P_DELITO_PRONOSTICO__5", "P_DELITO_PRONOSTICO__10",
+  "P_DELITO_PRONOSTICO__11",
+  "EV_CONFIA_CCH", "EV_CONFIA_PDI", "EV_CONFIA_FMP"
+)
+
+plots <- lapply(vars, function(v) crear_pie(mi_df, v, titulo = v))
+
+# LLAMADA CORRECTA A grid.arrange:
+grid.arrange(
+  grobs   = plots,         # <-- aquí va TU LISTA DE GROBS
+  ncol    = 5,
+  widths  = rep(1.5, 5),   # 4 columnas “anchas”
+  heights = rep(1.3, 5)    # 6 filas “altas”
+)
+```
+
+\newpage
+
+Se ha aplicado una paleta uniforme basada en el código de respuesta:
+1 = rosado, 2 = celeste, 3 = verde claro, 4 = verde oscuro, 5 = púrpura, 6 = lila, 7 = beige, 0 = amarillo, 88 = gris claro, 99 = gris oscuro y 85 = negro. Los códigos significan: en sexo 1 = Hombre y 2 = Mujer; en edad 0 = 0–14 años, 1 = 15–19, 2 = 20–29, 3 = 30–39, 4 = 40–49, 5 = 50–59, 6 = 60–69 y 7 = 70+; en percepción de delincuencia 1 = “Aumentó”, 2 = “Se mantuvo”, 3 = “Disminuyó”, 88 = “No sabe” y 99 = “No responde”; en inseguridad 1 = “Muy inseguro/a”, 2 = “Inseguro/a”, 3 = “Seguro/a”, 4 = “Muy seguro/a” y 85 = “No aplica”; en incivilidades 1 = “Nunca”, 2 = “Casi nunca”, 3 = “Ocasionalmente”, 4 = “Casi siempre” y 5 = “Siempre”; en exposición/pronóstico de delito 1 = “Sí” y 2 = “No”; y en confianza institucional 1 = “Mucha confianza”, 2 = “Bastante confianza”, 3 = “Poca confianza” y 4 = “Nada de confianza”.
+
+
+
+```{r interpretacion_un_parrafo, results='asis', warning=FALSE, message=FALSE}
+library(dplyr)
+
+interpretar_parrafo <- function(df) {
+  # 1) Sexo
+  pct_hombre <- df %>% 
+    filter(!is.na(rph_sexo)) %>% 
+    summarise(p = round(mean(as.character(rph_sexo) == "1") * 100, 1)) %>% 
+    pull(p)
+  pct_mujer <- df %>% 
+    filter(!is.na(rph_sexo)) %>% 
+    summarise(p = round(mean(as.character(rph_sexo) == "2") * 100, 1)) %>% 
+    pull(p)
+
+  # 2) Percepción de delincuencia
+  pct_pais <- df %>% 
+    filter(!is.na(P_AUMENTO_PAIS)) %>% 
+    summarise(p = round(mean(as.character(P_AUMENTO_PAIS) == "1") * 100, 1)) %>% 
+    pull(p)
+  pct_comu <- df %>% 
+    filter(!is.na(P_AUMENTO_COM)) %>% 
+    summarise(p = round(mean(as.character(P_AUMENTO_COM) == "1") * 100, 1)) %>% 
+    pull(p)
+
+  # 3) Inseguridad en distintos lugares
+  lugares <- c(
+    P_INSEG_LUGARES_1   = "al trasladarse en su vehículo",
+    P_INSEG_LUGARES_3   = "al usar buses o micros de transporte público",
+    P_INSEG_LUGARES_7   = "en restaurantes, bares o discotecas",
+    P_INSEG_LUGARES_8   = "en terminales de buses o ferrocarriles",
+    P_INSEG_LUGARES_10  = "en centros comerciales o malls",
+    P_INSEG_LUGARES_12  = "en plazas o parques de su barrio",
+    P_INSEG_LUGARES_16  = "en el banco"
+  )
+  pct_inseg <- sapply(names(lugares), function(v) {
+    df %>% 
+      filter(!is.na(.data[[v]])) %>% 
+      summarise(p = round(mean(as.character(.data[[v]]) %in% c("1", "2")) * 100, 1)) %>% 
+      pull(p)
+  })
+
+  # 4) Incivilidades frecuentes
+  inciv <- c(
+    P_INCIVILIDADES_4 = "ver peleas callejeras con armas en su barrio",
+    P_INCIVILIDADES_6 = "robo o asalto en vía pública",
+    P_INCIVILIDADES_7 = "presenciar balaceras o disparos"
+  )
+  pct_inciv <- sapply(names(inciv), function(v) {
+    df %>% 
+      filter(!is.na(.data[[v]])) %>% 
+      summarise(p = round(mean(as.character(.data[[v]]) %in% c("4", "5")) * 100, 1)) %>% 
+      pull(p)
+  })
+
+  # 5) Exposición a delito
+  pct_expos <- df %>% 
+    filter(!is.na(P_EXPOS_DELITO)) %>% 
+    summarise(p = round(mean(as.character(P_EXPOS_DELITO) == "1") * 100, 1)) %>% 
+    pull(p)
+
+  # 6) Pronóstico de delitos
+  delitos <- c(
+    P_DELITO_PRONOSTICO__1  = "robo en su vivienda",
+    P_DELITO_PRONOSTICO__2  = "robo o hurto de su vehículo",
+    P_DELITO_PRONOSTICO__5  = "robo o asalto con violencia",
+    P_DELITO_PRONOSTICO__10 = "delitos cibernéticos",
+    P_DELITO_PRONOSTICO__11 = "acoso callejero"
+  )
+  pct_delito <- sapply(names(delitos), function(v) {
+    df %>% 
+      filter(!is.na(.data[[v]])) %>% 
+      summarise(p = round(mean(as.character(.data[[v]]) == "1") * 100, 1)) %>% 
+      pull(p)
+  })
+
+  # 7) Confianza en instituciones
+  pct_confia_cch <- df %>% 
+    filter(!is.na(EV_CONFIA_CCH)) %>% 
+    summarise(p = round(mean(as.character(EV_CONFIA_CCH) %in% c("1","2")) * 100, 1)) %>% 
+    pull(p)
+  pct_confia_pdi <- df %>% 
+    filter(!is.na(EV_CONFIA_PDI)) %>% 
+    summarise(p = round(mean(as.character(EV_CONFIA_PDI) %in% c("1","2")) * 100, 1)) %>% 
+    pull(p)
+  pct_confia_fmp <- df %>% 
+    filter(!is.na(EV_CONFIA_FMP)) %>% 
+    summarise(p = round(mean(as.character(EV_CONFIA_FMP) %in% c("1","2")) * 100, 1)) %>% 
+    pull(p)
+
+  # 8) Empaquetar todo en un párrafo
+  frase <- paste0(
+    "La muestra se compone por ", pct_hombre, "% de hombres y ", pct_mujer, 
+    "% de mujeres. El ", pct_pais, "% cree que la delincuencia en el país ha aumentado y el ",
+    pct_comu, "% que ha aumentado en su comuna. Dentro de las respuestas completadas para la sección de inseguridad, el ",
+    paste0(pct_inseg, "% se siente inseguro ", lugares, collapse = ", "), 
+    ". El ", paste0(pct_inciv, "% reportó ", inciv, collapse = ", "), 
+    ". El ", pct_expos, "% se siente expuesto a un delito en los próximos 12 meses; ",
+    paste0(pct_delito, "% a ", delitos, collapse = ", "), 
+    ". Un ", pct_confia_cch, "% confía en Carabineros, un ", pct_confia_pdi, 
+    "% en la PDI y un ", pct_confia_fmp, "% en la Fiscalía o Ministerio Público."
+  )
+
+  cat(frase)
+}
+
+# ——— Ejecución ———
+cat("## Descripción automática de variables categóricas\n\n")
+interpretar_parrafo(params$data)
+```
+
+**Datos faltantes**
+
+Para el análisis general se emplearon únicamente las variables sin datos faltantes, tratadas de forma individual. En cambio, en el análisis de agrupamiento se excluirán todas las filas con valores ausentes o respuestas “no sabe” en las variables edad, exposición al delito, exposición a robo o asalto con violencia, victimización en los últimos 12 meses y percepción del aumento de la delincuencia en el país.
+
+```{r missing-summary-side-by-side, echo=FALSE, include=TRUE, results='asis'}
+# 1) Calcular resumen de missings
+miss <- miss_var_summary(df_resumen)
+
+# 2) Partir en dos mitades
+n    <- nrow(miss)
+half <- ceiling(n/2)
+miss1 <- miss[1:half, ]
+miss2 <- miss[(half+1):n, ]
+
+# 3) Renombrar segunda mitad
+names(miss2) <- paste0(names(miss2), "_2")
+combined <- cbind(miss1,miss2)
+# 4) Preparar las dos tablas LaTeX
+kable(combined,
+  format    = "latex",
+  booktabs  = TRUE,
+  align     = "lrr|lrr",                    # ← Aquí el pipe
+  col.names = rep(c("Variable","Faltantes","Proporción"), 2)
+) %>%
+  kable_styling(latex_options = c("scale_down","hold_position"))
+```
+
+**Relación entre variables (Tabla con valores obtenidos mediante V de Cramer)**
+
+```{r tabla_cramer_rmd, results='asis'}
+df_for_cramer <- params$data %>% mutate(across(3:25, as.factor))
+
+calc_v <- function(pair) {
+  tab <- table(df_for_cramer[[pair[1]]], df_for_cramer[[pair[2]]])
+  v   <- if (all(dim(tab) > 1)) suppressWarnings(CramerV(tab)) else NA_real_
+  data.frame(Var1 = pair[1], Var2 = pair[2], Valor = v)
+}
+
+tabla_cv <- combn(names(df_for_cramer)[3:25], 2, simplify = FALSE) |>
+  purrr::map_dfr(calc_v) |>
+  dplyr::filter(!is.na(Valor)) |>
+  arrange(desc(Valor)) |>
+  head(10)
+
+kableExtra::kbl(tabla_cv,
+                digits = 3, align = "l") |>
+  kableExtra::kable_classic(full_width = FALSE)
+```
+
+
+
+## Resumen General
+
+### Indicadores Clave
+
+```{r box_indicators_rmd, results='asis'}
+
+total_respuestas <- nrow(df_resumen)
+
+if (total_respuestas == 0) {
+  cat("No hay datos disponibles con los filtros seleccionados.\n")
+} else {
+  # Tasa de delitos
+  cantidad_delitos <- sum(df_resumen$SCREEN_ROB_RDV_N, df_resumen$SCREEN_ROB_RFV_N, df_resumen$SCREEN_ROB_RVI_N, df_resumen$SCREEN_ROB_FRB_N, na.rm = TRUE)
+  tasa_delitos <- round(100 * cantidad_delitos / total_respuestas, 1)
+  cat(paste0("- **Tasa de delitos reportados:** **", tasa_delitos, "%** de los encuestados han sido víctimas de un delito consumado.\n"))
+
+  # Tasa de intentos
+if (total_respuestas == 0) {
+  cat("No hay datos disponibles para calcular la tasa de intentos de robo.\n")
+} else {
+  df_intentos <- df_resumen %>%
+    filter(
+      (SCREEN_INT_RDV_N > 0 & is.na(SCREEN_ROB_RDV_N)) |
+        (SCREEN_INT_RFV_N > 0 & is.na(SCREEN_ROB_RFV_N)) |
+        (SCREEN_INT_RVI_N > 0 & is.na(SCREEN_ROB_RVI_N))
+    )
+  cantidad_intentos <- sum(df_intentos$SCREEN_INT_RDV_N, df_intentos$SCREEN_INT_RFV_N, df_intentos$SCREEN_INT_RVI_N, na.rm = TRUE)
+  tasa_intentos <- round(100 * cantidad_intentos / total_respuestas, 1)
+  cat(paste0("- **Tasa de intentos delitos:** **", tasa_intentos, "%** de los encuestados han sido víctimas de un intentos de robo, sin que el delito se haya consumado \n"))
+}
+  
+  # Tasa de denuncias
+  total_delitos_denuncia_calc <- sum(df_resumen$SCREEN_ROB_RDV_N, df_resumen$SCREEN_ROB_RFV_N, df_resumen$SCREEN_ROB_RVI_N, df_resumen$SCREEN_ROB_FRB_N, na.rm = TRUE)
+  total_denuncias <- sum(df_resumen$RDV_DENUNCIAS_N, df_resumen$RFV_DENUNCIAS_N, df_resumen$RVI_DENUNCIAS_N, df_resumen$FRB_DENUNCIAS_N, na.rm = TRUE)
+
+  if (total_delitos_denuncia_calc > 0) {
+    tasa_denuncias <- round(100 * total_denuncias / total_delitos_denuncia_calc, 1)
+    cat(paste0("- **Tasa de denuncias formales:** **", tasa_denuncias, "%** de los delitos consumados fueron denunciados formalmente.\n"))
+  } else {
+    cat("- **Tasa de denuncias formales:** No se reportaron delitos, por lo tanto no se puede calcular la tasa de denuncias.\n")
+  }
+}
+```
+
+### Percepción de Aumento de la Delincuencia en el País (por Sexo y Edad)
+
+```{r grafico_aumento_pais_rmd, fig.width=7, fig.height=4.5,  warning=FALSE, message=FALSE, echo=FALSE}
+df_plot <- params$data %>%
+  filter(P_AUMENTO_PAIS %in% c(1, 2, 3)) %>%
+  mutate(
+    sexo = factor(dplyr::recode(as.character(rph_sexo), !!!params$rph_sexo)),
+    edad = factor(dplyr::recode(as.character(rph_edad), !!!params$rph_edad)),
+    respuesta = factor(dplyr::recode(as.character(P_AUMENTO_PAIS),
+                                     "1" = "Ha aumentado", "2" = "Se mantiene igual", "3" = "Ha disminuido"),
+                       levels = c("Ha aumentado", "Se mantiene igual", "Ha disminuido")),
+    grupo = interaction(sexo, edad, sep = " - ")
+  )
+
+if(nrow(df_plot) > 0) {
+  resumen_plot <- df_plot %>%
+    group_by(grupo, respuesta) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(grupo) %>%
+    mutate(prop = n / sum(n)) %>%
+    ungroup()
+
+  plot_ly(
+  data      = resumen_plot,
+  x         = ~grupo,
+  y         = ~prop,
+  color     = ~respuesta,
+  type      = "bar",
+  colors    = c(
+    "Ha aumentado"      = "#f6511d",
+    "Se mantiene igual" = "#ffb400",
+    "Ha disminuido"     = "#00a6ed"
+  ),
+  hoverinfo = "text",
+  hovertext = ~paste0(
+    "Grupo: ", grupo, "<br>",
+    "Respuesta: ", respuesta, "<br>",
+    "Cantidad: ", n, "<br>",
+    "Porcentaje: ", scales::percent(prop, accuracy = 0.1)
+  )
+) %>%
+layout(
+  # si quisieras añadir un título:
+  # title = list(text = "Percepción por Edad y Sexo", font = list(size = 10)),
+  
+  barmode = "stack",
+  
+  xaxis = list(
+    title     = list(text = "Edad y Sexo", font = list(size = 9)),
+    tickangle = -45,
+    tickfont  = list(size = 8)
+  ),
+  
+  yaxis = list(
+    title     = list(text = "Proporción", font = list(size = 9)),
+    tickformat= ".0%",
+    tickfont  = list(size = 8)
+  ),
+  
+  legend = list(
+    title = list(text = "Percepción país", font = list(size = 9)),
+    font  = list(size = 8)
+  ),
+  
+  margin = list(b = 120, t = 50)
+)
+
+} else {
+  plot_ly() %>% layout(title = "No hay datos disponibles para este gráfico.")
+}
+```
+
+**Interpretación del Gráfico:**
+
+```{r interpretacion_aumento_pais, results='asis'}
+interpretar_aumento_pais <- function(df_data, rph_sexo_map, rph_edad_map) {
+  df_filtered <- df_data %>% filter(P_AUMENTO_PAIS %in% c(1, 2, 3))
+  
+  if (nrow(df_filtered) == 0) {
+    return("No hay datos válidos para interpretar la percepción del aumento de la delincuencia en el país.")
+  }
+
+  summary_data <- df_filtered %>%
+    mutate(respuesta = dplyr::recode(as.character(P_AUMENTO_PAIS), "1" = "aumentado", "2" = "mantenido igual", "3" = "disminuido")) %>%
+    count(respuesta) %>%
+    mutate(percentage = round(100 * n / sum(n), 1))
+
+  aumento_perc <- summary_data %>% filter(respuesta == "aumentado") %>% pull(percentage)
+  if (length(aumento_perc) == 0) aumento_perc <- 0
+
+  texto <- paste0("A nivel general, un **", aumento_perc, "%** de los encuestados percibe que la delincuencia en el país ha **aumentado** en los últimos doce meses. ")
+
+  # Análisis por grupo
+  aumento_por_grupo <- df_filtered %>%
+    filter(P_AUMENTO_PAIS == 1) %>%
+    mutate(
+      sexo = dplyr::recode(as.character(rph_sexo), !!!rph_sexo_map),
+      edad = dplyr::recode(as.character(rph_edad), !!!rph_edad_map)
+    ) %>%
+    count(sexo, edad, name = "count") %>%
+    arrange(desc(count))
+
+  if(nrow(aumento_por_grupo) > 0) {
+      max_grupo <- aumento_por_grupo[1,]
+      texto <- paste0(texto, "El grupo que con mayor frecuencia reporta esta percepción de aumento corresponde a **", max_grupo$sexo, "** en el rango de edad de **", max_grupo$edad, "**. ")
+  }
+
+  return(texto)
+}
+cat(interpretar_aumento_pais(params$data, params$rph_sexo, params$rph_edad))
+```
+
+
+## Percepción de Inseguridad
+
+### Indicadores de Percepción
+
+```{r box_exposicion_rmd, results='asis'}
+df_percepcion <- params$data %>% filter(P_EXPOS_DELITO %in% c(1, 2))
+total_respuestas_percepcion <- nrow(df_percepcion)
+
+if (total_respuestas_percepcion == 0) {
+  cat("No hay datos disponibles para calcular la exposición percibida.\n")
+} else {
+  muy_expuestos <- sum(df_percepcion$P_EXPOS_DELITO == 1, na.rm = TRUE)
+  porcentaje_exposicion <- round(100 * muy_expuestos / total_respuestas_percepcion, 1)
+  cat(paste0("El **", porcentaje_exposicion, "%** de los encuestados considera que será víctima de algún delito en los próximos doce meses.\n"))
+  cat("Esta cifra es un indicador clave del nivel de temor y la percepción de riesgo en la población.\n")
+}
+```
+
+```{r box_percepcion_pais_rmd, results='asis'}
+df_pais_percepcion <- params$data %>% filter(P_AUMENTO_PAIS %in% c(1, 2, 3))
+total_respuestas_pais <- nrow(df_pais_percepcion)
+
+if (total_respuestas_pais == 0) {
+  cat("No hay datos disponibles para calcular la percepción de aumento en el país.\n")
+} else {
+  aumento_pais <- sum(df_pais_percepcion$P_AUMENTO_PAIS == 1, na.rm = TRUE)
+  porcentaje_aumento_pais <- round(100 * aumento_pais / total_respuestas_pais, 1)
+  cat(paste0("El **", porcentaje_aumento_pais, "%** de los encuestados cree que la delincuencia en el país 'ha aumentado' en los últimos doce meses.\n"))
+  cat("Esta estadística muestra una preocupación generalizada sobre la situación de seguridad a nivel nacional.\n")
+}
+```
+
+```{r box_percepcion_comuna_rmd, results='asis'}
+df_comuna_percepcion <- params$data %>% filter(P_AUMENTO_COM %in% c(1, 2, 3))
+total_respuestas_comuna <- nrow(df_comuna_percepcion)
+
+if (total_respuestas_comuna == 0) {
+  cat("No hay datos disponibles para calcular la percepción de aumento en la comuna.\n")
+} else {
+  aumento_comuna <- sum(df_comuna_percepcion$P_AUMENTO_COM == 1, na.rm = TRUE)
+  porcentaje_aumento_comuna <- round(100 * aumento_comuna / total_respuestas_comuna, 1)
+  cat(paste0("El **", porcentaje_aumento_comuna, "%** de los encuestados percibe que la delincuencia en su comuna 'ha aumentado' en los últimos doce meses.\n"))
+  cat("Este valor refleja la percepción directa de los habitantes sobre la seguridad en su entorno más cercano.\n")
+}
+```
+
+### Percepción de Aumento de la Delincuencia (Comuna/Región)
+
+```{r grafico_percepcion_rmd, fig.width=7, fig.height=4.5,  warning=FALSE, message=FALSE, echo=FALSE}
+df_percepcion_plot <- params$data %>% filter(P_AUMENTO_COM %in% c(1, 2, 3))
+
+regiones_sel <- params$region_seleccionada_input
+comunas_sel  <- params$comuna_seleccionada_input
+
+usar_comunas <- (
+  (!is.null(comunas_sel) && length(comunas_sel) <= 10) ||
+  (is.null(comunas_sel)  && !is.null(regiones_sel) && length(regiones_sel) <= 3)
+)
+
+if (usar_comunas) {
+  datos_barra <- df_percepcion_plot %>%
+    mutate(
+      COMUNA = as.character(enc_rpc),
+      respuesta = factor(P_AUMENTO_COM,
+                         levels = c(1, 2, 3),
+                         labels = c("Ha aumentado", "Se mantiene igual", "Ha disminuido"))
+    ) %>%
+    count(COMUNA, respuesta) %>%
+    left_join(
+      params$map_data %>% as_tibble() %>%
+        mutate(COMUNA = as.character(COMUNA)) %>%
+        select(COMUNA, nombre = NOM_COMUNA) %>%
+        distinct(),
+      by = "COMUNA",
+      relationship = "many-to-many"
+    ) %>%
+    group_by(nombre, respuesta) %>%
+    summarise(n = sum(n), .groups = "drop")
+} else {
+  datos_barra <- df_percepcion_plot %>%
+    mutate(
+      REGION = as.character(enc_region),
+      nombre = dplyr::recode(REGION, !!!params$enc_region),
+      respuesta = factor(P_AUMENTO_COM,
+                         levels = c(1, 2, 3),
+                         labels = c("Ha aumentado", "Se mantiene igual", "Ha disminuido"))
+    ) %>%
+    count(nombre, respuesta) %>%
+    group_by(nombre, respuesta) %>%
+    summarise(n = sum(n), .groups = "drop")
+}
+
+# Ordenar por "Ha aumentado"
+orden_nombres <- datos_barra %>%
+  filter(respuesta == "Ha aumentado") %>%
+  arrange(desc(n)) %>%
+  pull(nombre)
+
+# Calcular porcentaje dentro de cada grupo
+datos_barra <- datos_barra %>%
+  group_by(nombre) %>%
+  mutate(porcentaje = round(100 * n / sum(n), 1)) %>%
+  ungroup()
+
+plot_ly(
+  datos_barra,
+  x = ~nombre,
+  y = ~porcentaje,      # <-- ahora usamos la proporción
+  color = ~respuesta,
+  colors = c(
+    "Ha aumentado"      = "#f6511d",
+    "Se mantiene igual" = "#ffb400",
+    "Ha disminuido"     = "#00a6ed"
+  ),
+  type = "bar",
+  hovertext = ~paste0(
+    "Respuesta: ",  respuesta,     "<br>",
+    "Porcentaje: ", porcentaje, "%" 
+  ),
+  hoverinfo = "text"
+) %>%
+layout(
+  barmode = "stack",
+  xaxis = list(
+    title     = list(text = "", font = list(size = 9)),
+    tickangle = 45,
+    tickfont  = list(size = 8)
+  ),
+  yaxis = list(
+    title    = list(text = "Porcentaje (%)", font = list(size = 9)),
+    tickfont = list(size = 8),
+    range    = c(0, 100)
+  ),
+  legend = list(
+    title = list(text = "Percepción delincuencia en la comuna", font = list(size = 9)),
+    font  = list(size = 8)
+  ),
+  margin = list(b = 100, t = 50)
+)
+
+```
+
+**Interpretación del gráfico de Percepción de Aumento de la Delincuencia (Comuna/Región):**
+
+```{r interpretacion_percepcion_comuna, results='asis'}
+interpretar_percepcion_comuna <- function(df_percepcion_plot, enc_region, enc_rpc, region_seleccionada_input, comuna_seleccionada_input) {
+  if (nrow(df_percepcion_plot) == 0) {
+    return("No hay datos disponibles para interpretar la percepción del aumento de la delincuencia a nivel comunal/regional.")
+  }
+
+  usar_comunas_local <- ( (!is.null(comuna_seleccionada_input) && length(comuna_seleccionada_input) <= 10) ||
+                         (is.null(comuna_seleccionada_input) && !is.null(region_seleccionada_input) && length(region_seleccionada_input) <= 3) )
+
+  if (usar_comunas_local) {
+    data_grouped <- df_percepcion_plot %>%
+      mutate(
+        ID = as.character(enc_rpc),
+        Name = dplyr::recode(ID, !!!enc_rpc), # Usa enc_rpc para nombres de comunas
+        respuesta = factor(P_AUMENTO_COM, levels = c(1, 2, 3), labels = c("Ha aumentado", "Se mantiene igual", "Ha disminuido"))
+      )
+    group_level <- "comuna"
+  } else {
+    data_grouped <- df_percepcion_plot %>%
+      mutate(
+        ID = as.character(enc_region),
+        Name = dplyr::recode(ID, !!!enc_region), # Usa enc_region para nombres de regiones
+        respuesta = factor(P_AUMENTO_COM, levels = c(1, 2, 3), labels = c("Ha aumentado", "Se mantiene igual", "Ha disminuido"))
+      )
+    group_level <- "región"
+  }
+
+  summary_data <- data_grouped %>%
+    group_by(Name, respuesta) %>%
+    summarise(n = n(), .groups = 'drop') %>%
+    group_by(Name) %>%
+    mutate(prop = n / sum(n)) %>%
+    ungroup()
+
+  # Encontrar el grupo con mayor percepción de aumento
+  most_aumento_group <- summary_data %>%
+    filter(respuesta == "Ha aumentado") %>%
+    arrange(desc(prop)) %>%
+    slice(1)
+
+  # Encontrar el grupo con menor percepción de aumento (entre los que tienen datos válidos)
+  least_aumento_group <- summary_data %>%
+    filter(respuesta == "Ha aumentado" & n > 0) %>% # Asegurarse de que haya al menos una respuesta
+    arrange(prop) %>%
+    slice(1)
+
+  if (nrow(most_aumento_group) == 0) {
+      return(paste0("No hay datos de percepción de aumento de la delincuencia por ", group_level, " para interpretar."))
+  }
+
+  interpretation_text <- paste0(
+    "Este gráfico muestra la distribución de la percepción de aumento de la delincuencia (en la comuna o región, dependiendo de la selección) entre las diferentes ", group_level, "es filtradas. "
+  )
+
+  if (nrow(most_aumento_group) > 0) {
+    interpretation_text <- paste0(interpretation_text,
+      "La ", group_level, " con la mayor proporción de personas que perciben un aumento de la delincuencia es **",
+      most_aumento_group$Name, "**, con un **",
+      round(most_aumento_group$prop * 100, 1), "%** de sus encuestados reportando un aumento."
+    )
+  }
+
+  if (nrow(least_aumento_group) > 0 && most_aumento_group$Name != least_aumento_group$Name) {
+    interpretation_text <- paste0(interpretation_text,
+      " Por otro lado, la ", group_level, " con la menor proporción de esta percepción es **",
+      least_aumento_group$Name, "**, con un **",
+      round(least_aumento_group$prop * 100, 1), "%**."
+    )
+  }
+  return(interpretation_text)
+}
+
+cat(interpretar_percepcion_comuna(params$data, params$enc_region, params$enc_rpc, params$region_seleccionada_input, params$comuna_seleccionada_input))
+```
+
+
+### Percepción de Inseguridad por Lugar
+
+```{r grafico_inseguridad_lugares_rmd, fig.width=7, fig.height=4.5,  warning=FALSE, message=FALSE, echo=FALSE}
+df_inseguridad_lugares <- params$data
+lugares_vars <- c("P_INSEG_LUGARES_1", "P_INSEG_LUGARES_3", "P_INSEG_LUGARES_7", "P_INSEG_LUGARES_8", "P_INSEG_LUGARES_10", "P_INSEG_LUGARES_12", "P_INSEG_LUGARES_16")
+lugares_nombres <- c("P_INSEG_LUGARES_1" = "Vehículo", "P_INSEG_LUGARES_3" = "Transporte público", "P_INSEG_LUGARES_7" = "Restaurante/bar", "P_INSEG_LUGARES_8" = "Terminal buses", "P_INSEG_LUGARES_10" = "Centro comercial", "P_INSEG_LUGARES_12" = "Parque/plaza", "P_INSEG_LUGARES_16" = "Banco")
+
+df_long <- df_inseguridad_lugares %>%
+  select_at(vars(lugares_vars)) %>%           # <<-- línea 248 corregida
+  pivot_longer(
+    cols      = names(.),
+    names_to  = "lugar",
+    values_to = "respuesta"
+  ) %>%
+  filter(respuesta %in% c(1, 2, 3, 4)) %>%
+  mutate(
+    lugar = dplyr::recode(lugar, !!!lugares_nombres),
+    respuesta = factor(dplyr::recode(as.character(respuesta), "1" = "Muy inseguro/a", "2" = "Inseguro/a", "3" = "Seguro/a", "4" = "Muy seguro/a"),
+                       levels = c("Muy seguro/a", "Seguro/a", "Inseguro/a", "Muy inseguro/a"))
+  ) %>%
+  group_by(lugar, respuesta) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(lugar) %>%
+  mutate(porcentaje = n / sum(n)) %>%
+  ungroup()
+
+if(nrow(df_long) > 0) {
+  # Ordenar por inseguridad
+  orden_lugares <- df_long %>%
+    filter(respuesta %in% c("Muy inseguro/a", "Inseguro/a")) %>%
+    group_by(lugar) %>%
+    summarise(total_inseguro = sum(porcentaje), .groups = "drop") %>%
+    arrange(total_inseguro) %>%
+    pull(lugar)
+  
+  df_long$lugar <- factor(df_long$lugar, levels = orden_lugares)
+  
+  plot_ly(
+  df_long, 
+  x           = ~porcentaje, 
+  y           = ~lugar, 
+  color       = ~respuesta, 
+  type        = "bar", 
+  orientation = "h",
+  hoverinfo   = "text", 
+  hovertext   = ~paste0(respuesta, ": ", round(porcentaje, 1), "%"),
+  colors      = RColorBrewer::brewer.pal(4, "RdYlBu")
+) %>% 
+layout(
+    barmode = "stack",
+  
+  # eje X: título y ticks
+  xaxis = list(
+    title = list(
+      text = "Porcentaje", 
+      font = list(size = 10)
+    ),
+    tickformat = ".0%",
+    tickfont   = list(size = 8)    # tamaño de los valores de las marcas
+  ),
+  
+  # eje Y: título y ticks
+  yaxis = list(
+    title = list(
+      text = "", 
+      font = list(size = 10)
+    ),
+    tickfont   = list(size = 8)
+  ),
+  
+  # leyenda: título y texto de items
+  legend = list(
+    title = list(
+      text = "Percepción", 
+      font = list(size = 9)
+    ),
+    font  = list(size = 8)         # tamaño de los labels de la leyenda
+  ),
+  
+  margin = list(l = 120, t = 60)    # añade un poco más de espacio arriba para el título
+)
+
+} else {
+  plot_ly() %>% layout(title = "No hay datos disponibles para este gráfico.")
+}
+```
+
+**Interpretación del Gráfico:**
+
+```{r interpretacion_inseguridad_lugares, results='asis'}
+interpretar_inseguridad_lugares <- function(df_data, lugares_map) {
+  df_long_summary <- df_data %>%
+    dplyr::select_at(vars(names(lugares_map))) %>%
+    pivot_longer(cols = everything(), names_to = "lugar_code", values_to = "respuesta_code") %>%
+    filter(respuesta_code %in% c(1, 2, 3, 4)) %>%
+    mutate(lugar = dplyr::recode(lugar_code, !!!lugares_map))
+  
+  if (nrow(df_long_summary) == 0) {
+    return("No hay datos válidos para interpretar la percepción de inseguridad por lugar.")
+  }
+
+  inseguridad_por_lugar <- df_long_summary %>%
+    filter(respuesta_code %in% c(1, 2)) %>% # 1: Muy inseguro, 2: Inseguro
+    count(lugar) %>%
+    left_join(df_long_summary %>% count(lugar, name = "total"), by = "lugar") %>%
+    mutate(porcentaje_inseguro = round(100 * n / total, 1)) %>%
+    arrange(desc(porcentaje_inseguro))
+    
+  if (nrow(inseguridad_por_lugar) == 0) {
+    return("No se reporta percepción de inseguridad ('Muy inseguro/a' o 'Inseguro/a') en ningún lugar.")
+  }
+
+  lugar_mas_inseguro <- inseguridad_por_lugar[1,]
+  lugar_menos_inseguro <- inseguridad_por_lugar[nrow(inseguridad_por_lugar),]
+
+  texto <- paste0(
+    "El lugar donde los encuestados se sienten más inseguros es el/la **", lugar_mas_inseguro$lugar,
+    "** (", lugar_mas_inseguro$porcentaje_inseguro, "% de percepción de inseguridad). "
+  )
+  
+  if (lugar_mas_inseguro$lugar != lugar_menos_inseguro$lugar) {
+    texto <- paste0(texto,
+      "En contraste, el lugar percibido como menos inseguro es el/la **", lugar_menos_inseguro$lugar,
+      "** (", lugar_menos_inseguro$porcentaje_inseguro, "%). "
+    )
+  }
+  return(texto)
+}
+cat(interpretar_inseguridad_lugares(params$data, lugares_nombres))
+```
+
+
+## Confianza Institucional
+
+
+```{r, results='asis'}
+df_confianza <- params$data
+total_resp_confianza <- nrow(df_confianza)
+
+if (total_resp_confianza == 0) {
+  cat("No hay datos disponibles para el cálculo de cantidad de delitos.\n")
+} else {
+  cantidad_delitos_conf <- sum(df_confianza$SCREEN_ROB_RDV_N, df_confianza$SCREEN_ROB_RFV_N, df_confianza$SCREEN_ROB_RVI_N, df_confianza$SCREEN_ROB_FRB_N, na.rm = TRUE)
+  cat(paste0("Se han reportado un total de **", cantidad_delitos_conf, "** delitos consumados (robo de vehículo, robo en vivienda, robo con violencia, fraude bancario) en los datos filtrados.\n"))
+  cat("Este valor representa el volumen absoluto de incidentes delictivos experimentados por la población seleccionada.\n")
+}
+
+```
+
+```{r cantidad_intentos_rmd, results='asis'}
+
+df_intento <- df_confianza %>%
+    filter(
+      (SCREEN_INT_RDV_N > 0 & is.na(SCREEN_ROB_RDV_N)) | 
+      (SCREEN_INT_RFV_N > 0 & is.na(SCREEN_ROB_RFV_N)) | 
+      (SCREEN_INT_RVI_N > 0 & is.na(SCREEN_ROB_RVI_N))
+    )
+
+if (total_resp_confianza == 0) {
+  cat("No hay datos disponibles para el cálculo de cantidad de intentos de robo.\n")
+} else {
+  cantidad_intentos_conf <- sum(
+    df_intento$SCREEN_INT_RDV_N,
+    df_intento$SCREEN_INT_RFV_N,
+    df_intento$SCREEN_INT_RVI_N,
+    na.rm = TRUE)
+  
+  cat(paste0("Se registraron **", cantidad_intentos_conf, "** intentos de robo (de vehículo, en vivienda, con violencia) en los datos filtrados.\n"))
+  cat("Este número complementa la información sobre delitos consumados, mostrando la magnitud de las amenazas delictivas no exitosas.\n")
+}
+```
+
+```{r cantidad_denuncias_rmd, results='asis'}
+if (total_resp_confianza == 0) {
+  cat("No hay datos disponibles para el cálculo de cantidad de denuncias.\n")
+} else {
+  cantidad_denuncias_conf <- sum(
+    df_confianza$RDV_DENUNCIAS_N,
+    df_confianza$RFV_DENUNCIAS_N,
+    df_confianza$RVI_DENUNCIAS_N,
+    df_confianza$FRB_DENUNCIAS_N,
+    na.rm = TRUE
+  )
+  cat(paste0("El número total de denuncias formales realizadas por los encuestados o sus hogares, con respecto a los delitos mencionados, es de **", cantidad_denuncias_conf, "**.\n"))
+  cat("Este dato es crucial para evaluar la propensión a denunciar entre la población afectada por la delincuencia.\n")
+}
+```
+
+### Confianza en Instituciones por Condición de Victimización
+
+```{r grafico_confianza_instituciones_rmd,, fig.width=7, fig.height=4.5,  warning=FALSE, message=FALSE, echo=FALSE}
+### Confianza en Instituciones
+
+df_confianza_inst <- params$data
+
+# Calcular la variable 'víctima'
+df_confianza_inst <- df_confianza_inst %>%
+  mutate(
+    total_delitos = rowSums(across(c(SCREEN_ROB_RDV_N, SCREEN_ROB_RFV_N, SCREEN_ROB_RVI_N, SCREEN_ROB_FRB_N)), na.rm = TRUE),
+    víctima = ifelse(total_delitos > 0, 1, 0),
+    víctima = factor(víctima, levels = c(0, 1), labels = c("No víctima", "Víctima"))
+  )
+
+confianza_vars <- c("EV_CONFIA_CCH", "EV_CONFIA_PDI", "EV_CONFIA_FMP")
+confianza_nombres <- c(
+  "EV_CONFIA_CCH" = "Carabineros de Chile",
+  "EV_CONFIA_PDI" = "PDI",
+  "EV_CONFIA_FMP" = "Fiscalía o Ministerio Público"
+)
+
+respuestas_validas_confianza <- c("1", "2", "3", "4")
+
+df_long_confianza <- df_confianza_inst %>%
+  dplyr::select(víctima, all_of(confianza_vars)) %>% # Seleccionar 'víctima' también
+  pivot_longer(cols = all_of(confianza_vars), names_to = "institucion_code", values_to = "respuesta_code") %>%
+  filter(respuesta_code %in% respuestas_validas_confianza) %>%
+  mutate(
+    institucion = dplyr::recode(institucion_code, !!!confianza_nombres),
+    respuesta = factor(dplyr::recode(as.character(respuesta_code),
+                                     "1" = "Mucha confianza",
+                                     "2" = "Bastante confianza",
+                                     "3" = "Poca confianza",
+                                     "4" = "Nada de confianza"),
+                       levels = c("Mucha confianza", "Bastante confianza", "Poca confianza", "Nada de confianza")),
+    Grupo = paste(institucion, "-", víctima) # Crear la variable 'Grupo' para el eje X
+  ) %>%
+  group_by(Grupo, institucion, víctima, respuesta) %>% # Agrupar por el nuevo 'Grupo'
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Grupo) %>% # Calcular porcentaje dentro de cada 'Grupo'
+  mutate(porcentaje = n / sum(n)) %>%
+  ungroup()
+
+# Ordenar los Grupos por el porcentaje combinado de "Mucha confianza" y "Bastante confianza"
+# dentro de cada grupo.
+# Aquí necesitamos un orden más sofisticado porque tenemos dos dimensiones (institución y víctima)
+# Podemos ordenar por institución primero, y luego por víctima (No víctima, Víctima)
+orden_instituciones_base <- c("Carabineros de Chile", "PDI", "Fiscalía o Ministerio Público")
+
+# Crear el orden final para el eje X
+# Esto asegura que para cada institución, "No víctima" aparezca antes que "Víctima"
+orden_final_grupos <- c(
+  paste(orden_instituciones_base[1], "-", "No víctima"),
+  paste(orden_instituciones_base[1], "-", "Víctima"),
+  paste(orden_instituciones_base[2], "-", "No víctima"),
+  paste(orden_instituciones_base[2], "-", "Víctima"),
+  paste(orden_instituciones_base[3], "-", "No víctima"),
+  paste(orden_instituciones_base[3], "-", "Víctima")
+)
+
+df_long_confianza$Grupo <- factor(df_long_confianza$Grupo, levels = orden_final_grupos)
+
+plot_ly(
+  df_long_confianza,
+  x = ~Grupo,
+  y = ~porcentaje, # Ahora es porcentaje en lugar de n
+  color = ~respuesta,
+  type = "bar",
+  colors = c("Mucha confianza" = "#337ca0", # Colores actualizados para coincidir con tu Shiny
+             "Bastante confianza" = "#3ec300",
+             "Poca confianza" = "#fffc31",
+             "Nada de confianza" = "#ff1d15"),
+  hoverinfo = "text",
+  hovertext = ~paste0("Nivel: ", respuesta, "<br>",
+                      "Porcentaje: ", round(porcentaje, 1), "% (", n, " personas)")
+) %>%
+  layout(
+    barmode = "stack",
+    xaxis = list(title = "Institución y condición de víctima", tickangle = 45, titlefont = list(size = 10), tickfont = list(size = 8)),
+    yaxis = list(title = "Porcentaje", tickformat = ".0%", range = c(0, 1), titlefont = list(size = 10), tickfont = list(size = 8)), # Rango 0-100 para porcentaje
+    legend = list(title = list(text = "Nivel de Confianza", font = list(size = 8)), font = list(size = 8)),
+    margin = list(b = 150) # Aumentar margen inferior para etiquetas del eje X
+  )
+```
+
+
+**Interpretación del Gráfico:**
+
+```{r interpretacion_confianza_instituciones, results='asis'}
+interpretar_confianza_instituciones <- function(df_confianza_inst, EV_CONFIA_) {
+  if (nrow(df_confianza_inst) == 0) {
+    return("No hay datos disponibles para interpretar la confianza en las instituciones.")
+  }
+
+  # Calcular la variable 'víctima' aquí también para la interpretación
+  df_confianza_inst <- df_confianza_inst %>%
+    mutate(
+      total_delitos = rowSums(across(c(SCREEN_ROB_RDV_N, SCREEN_ROB_RFV_N, SCREEN_ROB_RVI_N, SCREEN_ROB_FRB_N)), na.rm = TRUE),
+      víctima = ifelse(total_delitos > 0, 1, 0),
+      víctima = factor(víctima, levels = c(0, 1), labels = c("No víctima", "Víctima"))
+    )
+
+  confianza_vars <- c("EV_CONFIA_CCH", "EV_CONFIA_PDI", "EV_CONFIA_FMP")
+  confianza_nombres <- c(
+    "EV_CONFIA_CCH" = "Carabineros de Chile",
+    "EV_CONFIA_PDI" = "PDI",
+    "EV_CONFIA_FMP" = "Fiscalía o Ministerio Público"
+  )
+  respuestas_validas_confianza <- c("1", "2", "3", "4")
+
+  df_summary_confianza <- df_confianza_inst %>%
+    dplyr::select(víctima, all_of(confianza_vars)) %>%
+    pivot_longer(cols = all_of(confianza_vars), names_to = "institucion_code", values_to = "respuesta_code") %>%
+    filter(respuesta_code %in% respuestas_validas_confianza) %>%
+    mutate(
+      institucion = dplyr::recode(institucion_code, !!!confianza_nombres),
+      respuesta = factor(dplyr::recode(as.character(respuesta_code),
+                                       "1" = "Mucha confianza",
+                                       "2" = "Bastante confianza",
+                                       "3" = "Poca confianza",
+                                       "4" = "Nada de confianza"),
+                         levels = c("Mucha confianza", "Bastante confianza", "Poca confianza", "Nada de confianza"))
+    ) %>%
+    group_by(institucion, víctima, respuesta) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(institucion, víctima) %>%
+    mutate(porcentaje = 100 * n / sum(n)) %>%
+    ungroup()
+
+  if (nrow(df_summary_confianza) == 0) {
+    return("No hay datos de confianza en instituciones para interpretar.")
+  }
+
+  interpretation_text <- "El gráfico desglosa el nivel de confianza en las instituciones de seguridad pública, diferenciando entre personas que han sido víctimas de delitos y las que no. \n\n"
+
+  for (inst in unique(df_summary_confianza$institucion)) {
+    interpretation_text <- paste0(interpretation_text, "#### Confianza en ", inst, ":\n")
+
+    # Análisis para No Víctimas
+    no_victima_data <- df_summary_confianza %>%
+      filter(institucion == inst, víctima == "No víctima") %>%
+      filter(respuesta %in% c("Mucha confianza", "Bastante confianza")) %>%
+      summarise(total_confianza = sum(porcentaje), .groups = "drop")
+
+    if (nrow(no_victima_data) > 0 && !is.na(no_victima_data$total_confianza)) {
+      interpretation_text <- paste0(interpretation_text,
+        "- Entre las **No víctimas**, el **", round(no_victima_data$total_confianza, 1),
+        "%** expresa 'Mucha' o 'Bastante' confianza.\n"
+      )
+    } else {
+      interpretation_text <- paste0(interpretation_text,
+        "- No hay datos de confianza para las No víctimas en ", inst, ".\n"
+      )
+    }
+
+
+    # Análisis para Víctimas
+    victima_data <- df_summary_confianza %>%
+      filter(institucion == inst, víctima == "Víctima") %>%
+      filter(respuesta %in% c("Mucha confianza", "Bastante confianza")) %>%
+      summarise(total_confianza = sum(porcentaje), .groups = "drop")
+
+    if (nrow(victima_data) > 0 && !is.na(victima_data$total_confianza)) {
+      interpretation_text <- paste0(interpretation_text,
+        "- Entre las **Víctimas**, el **", round(victima_data$total_confianza, 1),
+        "%** expresa 'Mucha' o 'Bastante' confianza.\n"
+      )
+    } else {
+       interpretation_text <- paste0(interpretation_text,
+        "- No hay datos de confianza para las Víctimas en ", inst, ".\n"
+      )
+    }
+    interpretation_text <- paste0(interpretation_text, "\n") # Salto de línea entre instituciones
+  }
+
+  # Añadir un resumen general de las diferencias (opcional, pero útil)
+  total_confianza_general <- df_summary_confianza %>%
+    filter(respuesta %in% c("Mucha confianza", "Bastante confianza")) %>%
+    group_by(víctima) %>%
+    summarise(promedio_confianza = mean(porcentaje), .groups = "drop")
+
+  if (nrow(total_confianza_general) > 1) {
+    confianza_no_victima_avg <- total_confianza_general %>% filter(víctima == "No víctima") %>% pull(promedio_confianza) %>% round(1)
+    confianza_victima_avg <- total_confianza_general %>% filter(víctima == "Víctima") %>% pull(promedio_confianza) %>% round(1)
+
+    interpretation_text <- paste0(interpretation_text,
+      "En general, se observa una diferencia en la percepción de confianza según la condición de víctima. "
+    )
+    if (confianza_no_victima_avg > confianza_victima_avg) {
+      interpretation_text <- paste0(interpretation_text,
+        "Las **No víctimas** tienden a mostrar un nivel de confianza promedio más alto (aprox. **", confianza_no_victima_avg, "%**) que las **Víctimas** (aprox. **", confianza_victima_avg, "%**) a través de las instituciones, sugiriendo que la experiencia de victimización puede impactar negativamente la confianza institucional."
+      )
+    } else if (confianza_victima_avg > confianza_no_victima_avg) {
+      interpretation_text <- paste0(interpretation_text,
+        "Curiosamente, las **Víctimas** tienden a mostrar un nivel de confianza promedio más alto (aprox. **", confianza_victima_avg, "%**) que las **No víctimas** (aprox. **", confianza_no_victima_avg, "%**), lo que podría indicar una mayor interacción o un proceso de denuncia satisfactorio."
+      )
+    } else {
+      interpretation_text <- paste0(interpretation_text,
+        "La confianza promedio es similar entre Víctimas y No Víctimas, lo que indica que la victimización no impacta significativamente en la confianza general en este grupo filtrado."
+      )
+    }
+  }
+
+  return(interpretation_text)
+}
+
+cat(interpretar_confianza_instituciones(params$data, params$EV_CONFIA_))
+```
+
+## Victimización y Denuncia
+
+### Percepción de Incivilidades
+
+```{r treemap_incivilidades_rmd, fig.width=7, fig.height=4.5, warning=FALSE, message=FALSE, echo=FALSE}
+library(dplyr)
+library(ggplot2)
+library(treemapify)
+
+df_incivilidades <- params$data
+
+inciv_vars     <- c("P_INCIVILIDADES_4", "P_INCIVILIDADES_6", "P_INCIVILIDADES_7")
+labels_inciv   <- unname(params$P_INCIVILIDADES_[as.character(1:5)])
+region_labels  <- params$enc_region
+comuna_labels  <- params$enc_rpc
+
+df_inc <- df_incivilidades %>%
+  dplyr::select(enc_region, enc_rpc, all_of(inciv_vars)) %>%
+  pivot_longer(all_of(inciv_vars),
+               names_to  = "incivilidad_code",
+               values_to = "respuesta") %>%
+  filter(respuesta %in% 4:5) %>%
+  mutate(
+    categoria = factor(respuesta,
+                       levels = 1:5,
+                       labels = labels_inciv),
+    region    = region_labels[as.character(enc_region)],
+    comuna    = comuna_labels[as.character(enc_rpc)]
+  )
+
+usar_comunas <- !is.null(params$region_seleccionada_input) &&
+                length(params$region_seleccionada_input) > 0
+
+if (nrow(df_inc)==0) {
+  cat("No hay datos disponibles para mostrar el treemap.\n")
+} else {
+  df_treemap <- df_inc %>%
+    group_by(parent = if (usar_comunas) comuna else region,
+             sub   = categoria) %>%
+    summarise(n = n(), .groups="drop") %>%
+    group_by(parent) %>%
+    mutate(parent_total = sum(n),
+           parent_label = paste0(parent, "\n(Total: ", parent_total, ")")) %>%
+    ungroup()
+  
+  ggplot(df_treemap, 
+         aes(area = n, fill = sub, label = parent_label,
+             subgroup = parent)) +
+    geom_treemap(color = "white", size = 1) +
+    geom_treemap_subgroup_border(color = "gray30", size = 2) +
+    
+    # sólo texto en los grupos (región/comuna)
+    geom_treemap_subgroup_text(aes(label = parent_label),
+                               place    = "topleft",
+                               colour   = "darkgreen",
+                               fontface = "bold",
+                               size     = 10,
+                               padding.x = unit(2, "mm"),
+                               padding.y = unit(2, "mm")) +
+    
+    # escala de colores con leyenda automática
+    scale_fill_brewer(name = "Frecuencia",
+                      palette = "Set2") +
+    
+    theme_void() +
+    theme(
+      legend.position = "right",
+      legend.title    = element_text(size = 12, face = "bold"),
+      legend.text     = element_text(size = 10),
+      plot.title      = element_text(hjust = 0.5, size = 16, face = "bold",
+                                     margin = margin(t = 5, b = 5))
+    )
+}
+```
+
+```{r}
+interpretar_treemap_incivilidades <- function(df_incivilidades, params) {
+
+  if (nrow(df_incivilidades) == 0) {
+    return("No hay datos disponibles para interpretar el treemap de incivilidades con los filtros seleccionados.")
+  }
+
+  inciv_vars <- c("P_INCIVILIDADES_4", "P_INCIVILIDADES_6", "P_INCIVILIDADES_7")
+  labels_inciv <- unname(params$P_INCIVILIDADES_[as.character(1:5)])
+  region_labels <- params$enc_region
+  comuna_labels <- params$enc_rpc
+
+  df_inc <- df_incivilidades %>%
+    dplyr::select(enc_region, enc_rpc, all_of(inciv_vars)) %>%
+    pivot_longer(all_of(inciv_vars),
+                 names_to  = "incivilidad_code",
+                 values_to = "respuesta") %>%
+    filter(respuesta %in% 4:5) %>% # Filtrar solo 'casi siempre' y 'siempre'
+    mutate(
+      categoria = factor(respuesta,
+                         levels = 1:5,
+                         labels = labels_inciv),
+      region    = region_labels[as.character(enc_region)],
+      comuna    = comuna_labels[as.character(enc_rpc)]
+    )
+
+  usar_comunas <- !is.null(params$region_seleccionada_input) && length(params$region_seleccionada_input) > 0
+
+  if (nrow(df_inc) == 0) {
+    return("No hay datos de incivilidades con percepción 'casi siempre' o 'siempre' para interpretar.")
+  }
+
+  if (usar_comunas) {
+    df_treemap_final <- df_inc %>%
+      group_by(parent_group = comuna, sub_group = categoria) %>%
+      summarise(n = n(), .groups = "drop")
+    tipo_agrupacion <- "comuna"
+  } else {
+    df_treemap_final <- df_inc %>%
+      group_by(parent_group = region, sub_group = categoria) %>%
+      summarise(n = n(), .groups = "drop")
+    tipo_agrupacion <- "región"
+  }
+
+  total_general_respuestas <- sum(df_treemap_final$n)
+  if (total_general_respuestas == 0) {
+      return("No se encontraron percepciones de incivilidades ('casi siempre' o 'siempre') en los datos filtrados.")
+  }
+
+  # Calcular los grupos padre (comuna/región) con más y menos reportes
+  parent_groups_summary <- df_treemap_final %>%
+    group_by(parent_group) %>%
+    summarise(total_parent_n = sum(n), .groups = "drop") %>%
+    mutate(porcentaje_total = (total_parent_n / total_general_respuestas) * 100) %>%
+    arrange(desc(total_parent_n)) # Ordenar de mayor a menor
+
+  interpretation_text <- paste0(
+    "El treemap muestra la frecuencia de las incivilidades percibidas en el barrio con una frecuencia de 'Casi siempre' o 'Siempre', agrupadas por ", tipo_agrupacion, ". ",
+    "El tamaño de cada recuadro (o grupo de recuadros) es proporcional al número de personas que reportan estas incivilidades en esa área y categoría.\n\n"
+  )
+
+  # Interpretar las 2 con más y las 2 con menos (si hay suficientes)
+  if (nrow(parent_groups_summary) >= 2) { # Hay al menos 2 para comparar
+    top1_parent <- parent_groups_summary$parent_group[1]
+    top1_pct <- round(parent_groups_summary$porcentaje_total[1], 1)
+
+    top2_parent <- parent_groups_summary$parent_group[2]
+    top2_pct <- round(parent_groups_summary$porcentaje_total[2], 1)
+
+    interpretation_text <- paste0(interpretation_text,
+      "En cuanto a la distribución de incivilidades percibidas con alta frecuencia:\n",
+      "- Las ", tipo_agrupacion, " con mayor volumen de reportes son **", top1_parent, "** (", top1_pct, "%) y **", top2_parent, "** (", top2_pct, "%).\n"
+    )
+
+    if (nrow(parent_groups_summary) >= 4) { # Hay al menos 4 para mostrar las 2 últimas
+      bottom2_parent <- parent_groups_summary$parent_group[nrow(parent_groups_summary) - 1]
+      bottom2_pct <- round(parent_groups_summary$porcentaje_total[nrow(parent_groups_summary) - 1], 1)
+
+      bottom1_parent <- parent_groups_summary$parent_group[nrow(parent_groups_summary)]
+      bottom1_pct <- round(parent_groups_summary$porcentaje_total[nrow(parent_groups_summary)], 1)
+
+      interpretation_text <- paste0(interpretation_text,
+        "- Por otro lado, las ", tipo_agrupacion, " con menor número de reportes son **", bottom1_parent, "** (", bottom1_pct, "%) y **", bottom2_parent, "** (", bottom2_pct, "%).\n"
+      )
+    } else if (nrow(parent_groups_summary) == 3) { # Solo 3 grupos, mostrar la última
+      bottom1_parent <- parent_groups_summary$parent_group[nrow(parent_groups_summary)]
+      bottom1_pct <- round(parent_groups_summary$porcentaje_total[nrow(parent_groups_summary)], 1)
+       interpretation_text <- paste0(interpretation_text,
+        "- La ", tipo_agrupacion, " con menor número de reportes es **", bottom1_parent, "** (", bottom1_pct, "%).\n"
+      )
+    }
+  } else if (nrow(parent_groups_summary) == 1) { # Solo hay un grupo padre
+    only_parent <- parent_groups_summary$parent_group[1]
+    only_parent_pct <- round(parent_groups_summary$porcentaje_total[1], 1)
+    interpretation_text <- paste0(interpretation_text,
+      "Solo se encontraron datos para la ", tipo_agrupacion, " **", only_parent, "**, que concentra el **", only_parent_pct, "%** del total de reportes de incivilidades.\n"
+    )
+  } else { # No hay datos de grupos padres
+      interpretation_text <- paste0(interpretation_text,
+        "No se encontraron datos suficientes para comparar las ", tipo_agrupacion, "es en cuanto a la percepción de incivilidades.\n"
+      )
+  }
+
+  return(interpretation_text)
+}
+```
+
+**Interpretación del Treemap de Incivilidades:**
+
+```{r interpretacion_treemap_incivilidades, results='asis'}
+cat(interpretar_treemap_incivilidades(params$data, params))
+```
+
+### Principales incivilidades
+
+```{r, fig.height=4}
+# Asegurarse de que params$df_inc_processed_param esté disponible
+df_inc_for_barplot <- params$df_inc_processed_param
+
+if (is.null(df_inc_for_barplot) || nrow(df_inc_for_barplot) == 0) {
+  cat("No hay datos disponibles para el gráfico de Incivilidades con los filtros actuales.\n")
+} else {
+  incivilidad_descripciones <- c(
+    "P_INCIVILIDADES_4" = "Peleas callejeras con \n armas blancas o de fuego",
+    "P_INCIVILIDADES_6" = "Robos o asaltos en \n la vía pública",
+    "P_INCIVILIDADES_7" = "Balaceras o disparos"
+  )
+  
+  barplot_data <- df_inc_for_barplot %>%
+    group_by(incivilidad) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    mutate(incivilidad_desc = incivilidad_descripciones[incivilidad]) %>%
+    arrange(desc(count))
+  
+  p_bar <- ggplot(barplot_data, aes(x = reorder(incivilidad_desc, -count), y = count, fill = incivilidad_desc)) +
+    geom_bar(stat = "identity") +
+    labs(
+      x = "Tipo de Incivilidad",
+      y = "Cantidad de Reportes"
+    ) +
+    scale_fill_brewer(palette = "Set2") + 
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none") 
+  print(p_bar)
+}
+```
+
+**Interpretación del barplot:**
+
+```{r , results='asis', fig.height=4.5}
+# Recrear la lógica de la conclusión de incivilidades si es necesaria, o usar el df_inc_for_barplot
+df_inc_report <- params$data %>%
+ dplyr::select(contains("P_INCIVILIDADES_"), enc_region, enc_rpc) %>%
+ tidyr::pivot_longer(
+  cols = starts_with("P_INCIVILIDADES_"),
+  names_to = "incivilidad_code",
+  values_to = "respuesta"
+ ) %>%
+ # Filtrar por las que interesan y respuestas de alta frecuencia
+ filter(incivilidad_code %in% c("P_INCIVILIDADES_4", "P_INCIVILIDADES_6", "P_INCIVILIDADES_7"),
+    respuesta %in% 4:5) # 'Casi siempre' o 'Siempre'
+
+if (is.null(df_inc_report) || nrow(df_inc_report) == 0) {
+ cat("No se registran percepciones de incivilidades frecuentes ('Casi siempre' o 'Siempre') con los filtros actuales.\n")
+} else {
+ # Usar las etiquetas de incivilidades pasadas como parámetro
+ inciv_map <- c(
+    "P_INCIVILIDADES_4" = "Peleas callejeras con armas blancas o de fuego",
+    "P_INCIVILIDADES_6" = "Robos o asaltos en la vía pública",
+    "P_INCIVILIDADES_7" = "Balaceras o disparos"
+  )
+ region_map <- params$enc_region
+ comuna_map <- params$enc_rpc
+
+ usar_comunas <- !is.null(params$region_seleccionada_input) && length(params$region_seleccionada_input) > 0 && length(params$comuna_seleccionada_input) > 0
+
+ if(usar_comunas) {
+  df_summary <- df_inc_report %>% mutate(grupo = comuna_map[as.character(enc_rpc)]) %>% count(grupo)
+  tipo_grupo <- "comuna"
+ } else {
+  df_summary <- df_inc_report %>% mutate(grupo = region_map[as.character(enc_region)]) %>% count(grupo)
+  tipo_grupo <- "región"
+ }
+
+ df_summary <- df_summary %>% filter(!is.na(grupo)) %>% arrange(desc(n))
+
+ if (nrow(df_summary) == 0) {
+  cat("No hay datos suficientes para identificar la ubicación con mayor percepción de incivilidades.\n")
+ } else {
+  grupo_mayor_percepcion <- df_summary[1,]
+
+  incivilidad_mas_comun <- df_inc_report %>%
+   mutate(incivilidad = dplyr::recode(incivilidad_code, !!!inciv_map)) %>%
+   count(incivilidad) %>%
+   arrange(desc(n)) %>%
+   slice(1)
+
+  texto <- paste0("La incivilidad más común percibida por los encuestados es '", incivilidad_mas_comun$incivilidad, "'. La ", tipo_grupo, " con mayor percepción de incivilidades es ", grupo_mayor_percepcion$grupo, ".")
+  cat(texto)
+ }
+}
+```
+
+# Agrupación
+
+## Gráfico ACM y Silhouette
+
+Este gráfico muestra los resultados del Análisis de Componentes Múltiples (ACM) junto con el análisis de Silhouette para evaluar la calidad del clustering.
+
+```{r Grafico_ACM_Silhouette, fig.height=3.5, message=FALSE, warning=FALSE, results='asis'}
+
+# 1) Traigo el df limpio con cluster de params
+df_acm <- params$resultados_acm_param$df_acm_clean_with_cluster
+
+if (is.null(df_acm) || nrow(df_acm) < 3) {
+  plot.new()
+  text(0.5, 0.5,
+       "El gráfico ACM y Silhouette
+no está disponible.",
+       cex = 1.2)
+} else {
+  subs  <- params$resultados_acm_param$df_acm_subs
+  df_sub <- df_acm[subs, , drop = FALSE]
+
+  # 3) Preparo solo las columnas para MCA
+  vars_mca <- c("Incivilidades",
+                "INSEGURIDAD_LUGARES",
+                "DESCONFIANZA_INSTITUCIONAL",
+                "P_EXPOS_DELITO")
+  df_vars <- df_sub[, intersect(vars_mca, names(df_sub)), drop = FALSE]
+
+  # 4) MCA
+  mca_res <- params$resultados_acm$df_acm_mca_res
+  eig1 <- params$resultados_acm$df_acm_mca_res_e1
+  eig2 <- params$resultados_acm$df_acm_mca_res_e2
+  p1 <- factoextra::fviz_mca_ind(
+    mca_res, geom = "point",
+    habillage = df_sub$Cluster,
+    palette = "jco", repel = TRUE
+  ) +
+    labs(x = paste0("Dim 1 (", eig1, "%)"),
+         y = paste0("Dim 2 (", eig2, "%)")) +
+    theme_minimal() +
+    theme(plot.margin = margin(0,0,0,0))
+
+  # 5) Silhouette con Gower sobre el muestreo
+  diss <- params$resultados_acm$df_acm_sil_diss
+  sil  <- params$resultados_acm$df_acm_sil_sil
+  avgw <- params$resultados_acm$df_acm_sil_avgw
+  p2 <- factoextra::fviz_silhouette(sil) +
+    geom_vline(xintercept = avgw, linetype = "dashed") +
+    theme_minimal() +
+    theme(plot.title = element_blank(),
+          axis.title.x = element_blank(),
+          axis.text.x  = element_blank(),
+          axis.ticks.x = element_blank(),
+          plot.margin  = margin(0,0,0,0))
+
+  # 6) Dibujo lado a lado
+  grid.arrange(p1, p2, ncol = 2)
+}
+```
+Se puede visualizar que para el análisis de correspondencias múltiples que se realiza para toda la muestra existen 2 grupos suficientemente separados, en donde la asociación a un clúster promedio es de 0.57 lo cual no es “excelente” (≥ 0.70), aún hay solapamiento (sectores bajo el promedio) y algunos puntos se encuentran cerca del límite entre grupos—, pero supera el umbral habitual de 0.50 que indica una estructura sólida.
+
+## ScreePlot del MCA
+
+El ScreePlot muestra la proporción de varianza explicada por cada dimensión en el Análisis de Componentes Múltiples.
+
+```{r ScreePlot_MCA, echo=FALSE, results='asis',fig.height=3}
+library(dplyr)
+library(FactoMineR)
+library(ggplot2)
+  eig_df  <- params$resultados_acm$df_scree
+  colnames(eig_df)[2] <- "perc_var"
+  eig_df$Dimension <- seq_len(nrow(eig_df))
+
+  # 5) Grafico con ggplot2
+  p <- ggplot(eig_df, aes(x = factor(Dimension), y = perc_var)) +
+    geom_col(fill = "#2c7fb8", width = 0.6) +
+    geom_text(aes(label = sprintf("%.1f%%", perc_var)),
+              vjust = -0.3, size = 3.5, color = "#084594") +
+    labs(
+      x     = "Dimensión",
+      y     = "Varianza explicada (%)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title      = element_text(face = "bold"),
+      panel.grid.minor = element_blank()
+    )
+
+  print(p)
+```
+Con respecto al screeplot este se utiliza para determinar la cantidad de factores o clusterés que utilizaremos, observamos que con 2 se explica el 55\% de la varianza, lo cuál puede considerarse bajo, sin embargo, en este caso por recomendación del equipo estadístico del ministerio de seguridad se considero una cantidad adecuada debido a que la mayoria de las variables tenian una cantidad baja de respuestas por lo que 2 clusterés fueron considerados como una cantidad correcta y suficiente para análizar la muestra mediante los 2 grupos formados.  
+
+## Tabla Resumen de Clusters
+
+Esta tabla presenta un resumen de las características de los clusters identificados, mostrando el porcentaje de respuestas para cada variable dentro de cada grupo.
+
+```{r Tabla_Clusters, echo=FALSE, fig.height=5, fig.width=10}
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(kableExtra)
+
+df_acm <- params$resultados_acm_param$df_acm_clean_with_cluster
+
+if (is.null(df_acm)) {
+  cat("La tabla de entropía no está disponible.")
+} else {
+  vars <- c("Incivilidades",
+            "INSEGURIDAD_LUGARES",
+            "DESCONFIANZA_INSTITUCIONAL",
+            "P_EXPOS_DELITO")
+
+  # 1) Pivot largo
+  df_long <- df_acm %>%
+    dplyr::select(all_of(vars), Cluster) %>%
+    tidyr::pivot_longer(
+      cols      = all_of(vars),
+      names_to  = "Variable",
+      values_to = "Respuesta"
+    )
+
+  # 2) Conteos y totales
+  counts <- df_long %>%
+    dplyr::count(Variable, Respuesta, Cluster, name = "n")
+
+  totals <- df_long %>%
+    dplyr::count(Variable, Cluster, name = "total")
+
+  # 3) Porcentajes
+  pct <- counts %>%
+    dplyr::left_join(totals, by = c("Variable", "Cluster")) %>%
+    dplyr::mutate(pct = round(n / total * 100, 1)) %>%
+    dplyr::select(Variable, Respuesta, Cluster, pct)
+
+  # 4) Formato ancho
+  wide <- pct %>%
+    tidyr::pivot_wider(
+      names_from  = Cluster,
+      values_from = pct,
+      values_fill = list(pct = 0)
+    ) %>%
+    dplyr::rename(
+      `% Grupo 1` = `Grupo 1`,
+      `% Grupo 2` = `Grupo 2`
+    ) %>%
+    dplyr::arrange(Variable, Respuesta)
+
+  # 5) Dibujo la tabla
+  knitr::kable(
+    wide,
+    format    = "latex",
+    booktabs  = TRUE,
+    align     = "lrrr"
+  ) %>%
+    kable_styling(latex_options = c("scale_down", "hold_position"))
+}
+```
+Se observa que el primer grupo se caracteriza principalmente por personas que presencian frecuentemente incivilidades en su barrio, que además se sienten expuestos a ser víctimas de un delito en los proximos 12 meses y que responden sentirse inseguros en uno o más lugares de los mencionados en el análisis anterior. En cuánto al segundo grupo, este se caracteriza mayoritariamente por aquellas personas que respondieron que no se sienten inseguros, ni frecuentan incivilidades en su barrio y no se sienten expuestos a delitos. Destacar que en la desconfianza institucional los grupos no presentan diferencias tan amplias.
+
+# Conclusiones
+
+```{r conclusiones, results='asis'}
+df_filtered <- params$data
+resultados_reporte <- params$resultados_acm_param
+# Initialize an empty vector to store HTML parts of conclusions
+all_conclusions_html_parts <- c()
+
+# Check if data is available
+if (is.null(df_filtered) || nrow(df_filtered) == 0) {
+  cat('<h4>No hay datos disponibles para generar conclusiones con los filtros actuales.</h4>')
+} else {
+
+  # 1. Conclusión: Regiones con mayor percepción de aumento de inseguridad
+  {
+    perc_aumento_region <- df_filtered %>%
+      filter(P_AUMENTO_COM %in% c(1, 2, 3)) %>%
+      group_by(enc_region) %>%
+      summarise(
+        total = n(),
+        aumento_count = sum(P_AUMENTO_COM == 1, na.rm = TRUE),
+        perc_aumento = (aumento_count / total) * 100
+      ) %>%
+      arrange(desc(perc_aumento)) %>%
+      head(3)
+
+    if (nrow(perc_aumento_region) > 0) {
+      regions_text <- paste0(
+        "Las regiones de Chile que más perciben que la inseguridad en su comuna aumentó fueron ",
+        paste(sapply(perc_aumento_region$enc_region, function(x) params$enc_region[as.character(x)]), collapse = ", "),
+        " con una percepción de aumento del ",
+        paste(round(perc_aumento_region$perc_aumento, 2), "%", collapse = ", "),
+        " respectivamente."
+      )
+
+      region_conclusion_html <- paste0(
+        '<div class="conclusion-box">',
+        '<h4> <i class="fas fa-location-dot fa-lg" role="presentation" aria-label="location-dot icon"></i> <strong>Percepción Regional de Inseguridad</strong> </h4>',
+        '<p>', regions_text, '</p>',
+        '<p><strong>Recomendación:</strong> Se sugiere focalizar recursos y programas de seguridad preventiva en estas regiones, impulsando la coordinación entre autoridades locales y la comunidad.</p>',
+        '</div>'
+      )
+      all_conclusions_html_parts <- c(all_conclusions_html_parts, region_conclusion_html)
+    }
+  }
+
+  # 2. Conclusión: Comunas con mayor inseguridad en la región más afectada
+  {
+    if (exists("perc_aumento_region") && nrow(perc_aumento_region) > 0) {
+      top_region_code <- perc_aumento_region$enc_region[1]
+      top_region_name <- params$enc_region[as.character(top_region_code)]
+
+      perc_aumento_comuna_top_region <- df_filtered %>%
+        filter(enc_region == top_region_code, P_AUMENTO_COM %in% c(1, 2, 3)) %>%
+        group_by(enc_rpc) %>%
+        summarise(
+          total = n(),
+          aumento_count = sum(P_AUMENTO_COM == 1, na.rm = TRUE),
+          perc_aumento = (aumento_count / total) * 100
+        ) %>%
+        arrange(desc(perc_aumento)) %>%
+        head(3)
+
+      if (nrow(perc_aumento_comuna_top_region) > 0) {
+        communes_text <- paste0(
+          "Las comunas con mayor percepción de inseguridad dentro de ", top_region_name, " fueron ",
+          paste(sapply(perc_aumento_comuna_top_region$enc_rpc, function(x) params$enc_rpc[as.character(x)]), collapse = ", "),
+          "."
+        )
+        commune_conclusion_html <- paste0(
+          '<div class="conclusion-box">',
+          '<h4> <i class="fas fa-city fa-lg" role="presentation" aria-label="city icon"></i> <strong>Puntos Calientes de Inseguridad Comunal</strong> </h4>',
+          '<p>', communes_text, '</p>',
+          '<p><strong>Recomendación:</strong> Para estas comunas, se recomienda un mayor despliegue de personal policial, a través de rondas nocturnas y en sectores más frecuentados, y el fortalecimiento de la vigilancia comunitaria.</p>',
+          '</div>'
+        )
+        all_conclusions_html_parts <- c(all_conclusions_html_parts, commune_conclusion_html)
+      }
+    }
+  }
+
+  # 3. Conclusión: Lugares y situaciones de mayor inseguridad percibida
+  {
+    inseg_places_vars <- c("P_INSEG_LUGARES_1", "P_INSEG_LUGARES_3", "P_INSEG_LUGARES_7",
+                           "P_INSEG_LUGARES_8", "P_INSEG_LUGARES_10",
+                           "P_INSEG_LUGARES_12", "P_INSEG_LUGARES_16")
+
+    inseg_df <- df_filtered %>%
+      dplyr::select(all_of(inseg_places_vars)) %>%
+      tidyr::pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+      filter(value %in% c(1, 2)) # 'Muy inseguro/a' o 'Inseguro/a'
+
+    if (nrow(inseg_df) > 0) {
+      top_inseg_places <- inseg_df %>%
+        group_by(variable) %>%
+        summarise(insecurity_count = n()) %>%
+        arrange(desc(insecurity_count)) %>%
+        head(3)
+
+      place_labels_map <- c(
+        "P_INSEG_LUGARES_1" = "Trasladándose en vehículo",
+        "P_INSEG_LUGARES_3" = "En transporte público",
+        "P_INSEG_LUGARES_7" = "En un restaurante, bar, pub, café, discoteque u otro lugar de recreación",
+        "P_INSEG_LUGARES_8" = "En un terminal de buses o ferrocarriles",
+        "P_INSEG_LUGARES_10" = "En centros comerciales o malls",
+        "P_INSEG_LUGARES_12" = "En plazas o parques de su barrio",
+        "P_INSEG_LUGARES_16" = "En el banco"
+      )
+
+      top_places_names <- sapply(top_inseg_places$variable, function(x) place_labels_map[x])
+
+      places_text <- paste0(
+        "La muestra reporta que los lugares y situaciones en los que se sienten más inseguros son: ",
+        paste(top_places_names, collapse = ", "),
+        "."
+      )
+
+      places_conclusion_html <- paste0(
+        '<div class="conclusion-box">',
+        '<h4> <i class="far fa-face-frown fa-lg" role="presentation" aria-label="face-frown icon"></i> <strong>Zonas de Alta Inseguridad Percibida</strong> </h4>',
+        '<p>', places_text, '</p>',
+        '<p><strong>Recomendación:</strong> Se recomienda mantener un mayor control de estas zonas específicas, incluyendo aumento de patrullajes, mejoras en la iluminación y cámaras de seguridad.</p>',
+        '</div>'
+      )
+      all_conclusions_html_parts <- c(all_conclusions_html_parts, places_conclusion_html)
+    }
+  }
+
+  # 4. Conclusión: Confianza en instituciones, victimización y denuncias
+  {
+    # Calcular cantidades de delitos y denuncias para la tasa
+    total_delitos_reported <- sum(df_filtered$SCREEN_ROB_RDV_N, df_filtered$SCREEN_ROB_RFV_N, df_filtered$SCREEN_ROB_RVI_N, df_filtered$SCREEN_ROB_FRB_N, na.rm = TRUE)
+
+    total_denuncias_reported <- sum(df_filtered$RDV_DENUNCIAS_N, df_filtered$RFV_DENUNCIAS_N, df_filtered$RVI_DENUNCIAS_N, df_filtered$FRB_DENUNCIAS_N, na.rm = TRUE)
+
+    denunciation_rate <- if (total_delitos_reported > 0) (total_denuncias_reported / total_delitos_reported) * 100 else 0
+
+    # Preparar datos para el análisis de confianza, similar al gráfico
+    datos_confianza_plot <- df_filtered %>%
+      mutate(
+        total_delitos_victim = rowSums(across(c(SCREEN_ROB_RDV_N, SCREEN_ROB_RFV_N, SCREEN_ROB_RVI_N, SCREEN_ROB_FRB_N)), na.rm = TRUE),
+        víctima = ifelse(total_delitos_victim > 0, 1, 0),
+        víctima_label = factor(víctima, labels = c("No víctima", "Víctima"))
+      ) %>%
+      dplyr::select(víctima_label, EV_CONFIA_CCH, EV_CONFIA_PDI, EV_CONFIA_FMP) %>%
+      pivot_longer(cols = c(EV_CONFIA_CCH, EV_CONFIA_PDI, EV_CONFIA_FMP),
+                   names_to = "Institucion_Code",
+                   values_to = "Confianza_Code") %>%
+      filter(Confianza_Code %in% 1:4) %>% # Filtrar 88/99
+      mutate(
+        Institucion_Label = dplyr::recode(Institucion_Code,
+                                          "EV_CONFIA_CCH" = "Carabineros",
+                                          "EV_CONFIA_PDI" = "PDI",
+                                          "EV_CONFIA_FMP" = "Fiscalía")
+      )
+
+    # Calcular porcentajes de personas que CONFÍAN (valores 1 o 2) por institución y estado de víctima
+    confidence_summary <- datos_confianza_plot %>%
+      group_by(Institucion_Label, víctima_label) %>%
+      summarise(
+        total_resp = n(),
+        conf_count = sum(Confianza_Code %in% c(1, 2), na.rm = TRUE), # "Mucha" o "Bastante"
+        perc_conf = (conf_count / total_resp) * 100,
+        .groups = 'drop'
+      )
+
+    # Extraer porcentajes para el texto
+    perc_conf_cch_general <- confidence_summary %>% filter(Institucion_Label == "Carabineros", víctima_label == "No víctima") %>% pull(perc_conf)
+    perc_conf_cch_victima <- confidence_summary %>% filter(Institucion_Label == "Carabineros", víctima_label == "Víctima") %>% pull(perc_conf)
+
+    perc_conf_pdi_general <- confidence_summary %>% filter(Institucion_Label == "PDI", víctima_label == "No víctima") %>% pull(perc_conf)
+    perc_conf_pdi_victima <- confidence_summary %>% filter(Institucion_Label == "PDI", víctima_label == "Víctima") %>% pull(perc_conf)
+
+    perc_conf_fmp_general <- confidence_summary %>% filter(Institucion_Label == "Fiscalía", víctima_label == "No víctima") %>% pull(perc_conf)
+    perc_conf_fmp_victima <- confidence_summary %>% filter(Institucion_Label == "Fiscalía", víctima_label == "Víctima") %>% pull(perc_conf)
+
+    # Construir el texto de la conclusión
+    confidence_comparison_text <- "En cuanto a la confianza institucional, se observa un patrón claro: las personas que han sido víctimas de un delito tienden a tener un menor nivel de confianza en las instituciones encargadas de la seguridad."
+
+    if (length(perc_conf_cch_general) > 0 && length(perc_conf_cch_victima) > 0) {
+      confidence_comparison_text <- paste0(
+        confidence_comparison_text, " Por ejemplo, el porcentaje de confianza (Mucha o Bastante) en <strong>Carabineros</strong> es del <strong>",
+        round(perc_conf_cch_general, 2), "%</strong> para no víctimas vs. <strong>",
+        round(perc_conf_cch_victima, 2), "%</strong> para víctimas. "
+      )
+    }
+
+    if (length(perc_conf_pdi_general) > 0 && length(perc_conf_pdi_victima) > 0) {
+      confidence_comparison_text <- paste0(
+        confidence_comparison_text, "Similarmente, para la <strong>PDI</strong>, la confianza es del <strong>",
+        round(perc_conf_pdi_general, 2), "%</strong> para no víctimas y <strong>",
+        round(perc_conf_pdi_victima, 2), "%</strong> para víctimas. "
+      )
+    }
+
+    if (length(perc_conf_fmp_general) > 0 && length(perc_conf_fmp_victima) > 0) {
+      confidence_comparison_text <- paste0(
+        confidence_comparison_text, "En la <strong>Fiscalía</strong>, los porcentajes son <strong>",
+        round(perc_conf_fmp_general, 2), "%</strong> (no víctimas) vs. <strong>",
+        round(perc_conf_fmp_victima, 2), "%</strong> (víctimas)."
+      )
+    }
+
+    # El párrafo de la tasa de denuncia se integra al final de la comparación de confianza
+    denunciation_text <- paste0("Esta diferencia en la confianza se ve reforzada por una baja tasa de denuncias de los delitos reportados (aproximadamente el <strong>", round(denunciation_rate, 2), "%</strong> de los delitos reportados son denunciados formalmente), lo que sugiere una falta de creencia en la efectividad del sistema para abordar sus experiencias.")
+
+
+    confidence_conclusion_html <- paste0(
+      '<div class="conclusion-box">',
+      '<h4> <i class="fas fa-handshake-simple-slash fa-lg" role="presentation" aria-label="handshake-simple-slash icon"></i> <strong>Confianza Institucional y Reporte de Delitos</strong> </h4>',
+      '<p>', confidence_comparison_text, '</p>',
+      '<p>', denunciation_text, '</p>', # Párrafo de denuncias ahora más integrado
+      '<p><strong>Recomendación:</strong> Se recomienda diseñar estrategias para aumentar la confianza de la población en las instituciones encargadas de la seguridad y la justicia, con un enfoque particular en las víctimas de delitos. Esto podría incluir campañas de cercanía, mejora en la calidad de la atención a las víctimas, y optimización de los procesos de denuncia para hacerlos más accesibles y transparentes, lo cual podría a su vez incrementar la tasa de denuncias.</p>',
+      '</div>'
+    )
+    all_conclusions_html_parts <- c(all_conclusions_html_parts, confidence_conclusion_html)
+  }
+
+  # 5. Conclusión: Análisis de Agrupamiento (Clustering)
+  {
+    # Access resultados_acm_param which contains the clustering results
+    if (!is.null(params$resultados_acm_param$df_acm_clean_with_cluster) &&
+        nrow(params$resultados_acm_param$df_acm_clean_with_cluster) > 0) {
+
+      num_clusters <- length(unique(params$resultados_acm_param$df_acm_clean_with_cluster$Cluster))
+
+      if (num_clusters > 1) {
+        cluster_summary_text <- paste0(
+          "El análisis de agrupamiento (clustering) ha revelado la existencia de ", num_clusters, " perfiles distintos de la población en cuanto a sus percepciones y experiencias relacionadas con la seguridad. ",
+          "Cada grupo exhibe características particulares en variables clave como la percepción de aumento de la delincuencia, la exposición al delito o la confianza en las instituciones, como se detalla en la tabla de entropía y el gráfico ACM. ",
+          "Por ejemplo, algunos clusters podrían estar más expuestos a ciertos tipos de delitos o sentir mayor inseguridad en lugares específicos."
+        )
+        clustering_conclusion_html <- paste0(
+          '<div class="conclusion-box">',
+          '<h4> <i class="fas fa-users fa-lg" role="presentation" aria-label="users icon"></i> <strong>Perfiles de la Población y Seguridad</strong> </h4>',
+          '<p>', cluster_summary_text, '</p>',
+          '<p><strong>Recomendación:</strong> Se sugiere diseñar políticas de seguridad pública segmentadas y focalizadas, adaptadas a las necesidades y características de cada perfil de ciudadano identificado. Esto permitirá una asignación más eficiente de recursos y una mayor efectividad en las intervenciones.</p>',
+          '</div>'
+        )
+        all_conclusions_html_parts <- c(all_conclusions_html_parts, clustering_conclusion_html)
+      } else {
+        clustering_conclusion_html <- paste0(
+          '<div class="conclusion-box">',
+          '<h4> <i class="fas fa-users fa-lg" role="presentation" aria-label="users icon"></i> <strong>Análisis de Agrupamiento</strong> </h4>',
+          '<p>El análisis de agrupamiento no identificó perfiles de población distintivos con los datos actuales, o todos los datos forman un único grupo predominante. Esto puede indicar una homogeneidad en las percepciones/experiencias o la necesidad de ajustar los parámetros del algoritmo de clustering.</p>',
+          '</div>'
+        )
+        all_conclusions_html_parts <- c(all_conclusions_html_parts, clustering_conclusion_html)
+      }
+    } else {
+      clustering_conclusion_html <- paste0(
+        '<div class="conclusion-box">',
+        '<h4> <i class="fas fa-users fa-lg" role="presentation" aria-label="users icon"></i> <strong>Análisis de Agrupamiento</strong> </h4>',
+        '<p>El análisis de agrupamiento no ha generado resultados. Asegúrate de que los datos y el proceso de clustering estén funcionando correctamente.</p>',
+        '</div>'
+      )
+      all_conclusions_html_parts <- c(all_conclusions_html_parts, clustering_conclusion_html)
+    }
+  }
+
+  # Combine all HTML parts and print them
+  final_html_string <- paste(all_conclusions_html_parts, collapse = " ")
+  cat(final_html_string)
+}
+```
+
+# Consideraciones éticas y limitaciones 
+
+Aunque la ENUSC 2023 cuenta con un diseño de muestreo probabílistico robusto, existen riesgos de sesgo derivados de la no respuesta diferencial y de la reducción de la base (p. ej., exclusión de “No sabe/No responde”), lo que podría subrepresentar o sobrerepresentar ciertos perfiles de victimización y distorsionar inferencias territoriales. En materia de privacidad, el tratamiento de microdatos exige estricta anonimización y gobernanza de acceso. Respecto a la sustentabilidad de la solución, la arquitectura BI depende de actualizaciones periódicas de la ENUSC y de recursos computacionales para recalibrar el modelo; por ello se recomienda planificar un ciclo anual de mantenimiento, incluir mecanismos de versionado y documentar tanto el flujo de datos como el código para asegurar reproducibilidad. Se debe destacar además que la principal limitación de ofrecer cambios en el área de seguridad es lo entregado por La Comisión Interamericana de Derechos Humanos en 2009, mediante su informe advierte que toda reforma en materia de seguridad ciudadana “debe incorporar los estándares internacionales de derechos humanos como guía y límite infranqueable”, respetando los principios de necesidad, proporcionalidad, participación, rendición de cuentas y no discriminación, pues de lo contrario las medidas podrían vulnerar derechos fundamentales y erosionar la legitimidad del Estado.
+
+# Referencias
+
+Agresti, A. (2019). An Introduction to Categorical Data Analysis (3rd ed.). John Wiley & Sons.
+
+Comisión Interamericana de Derechos Humanos. (2009). Informe sobre seguridad ciudadana y derechos humanos. Organización de los Estados Americanos. 
+
+Contreras, F. R. E. ., Quilligana, R. I. B. ., Barzola, J. A. C. ., Quispillo, J. M. G. ., & Gamboa, D. A. P. . (2024). Multivariate analysis of homicide and intentional crime rates in South America: An application of the HJ biplot. Edelweiss Applied Science and Technology. https://doi.org/10.55214/25768484.v8i6.3172
+
+Eckerson, W. W. (2010). Performance dashboards: Measuring, monitoring, and managing your business (2.ª ed.). John Wiley & Sons. 
+books.google.com
+
+Greenacre, M. J. (2007). Correspondence Analysis in Practice (2ª ed.). Chapman & Hall/CRC
+
+Huang, Z. (1998). Extensions to the k-means algorithm for clustering large data sets with categorical values. Data Mining and Knowledge Discovery, 2(3), 283–304.
+
+Instituto Nacional de Estadísticas (INE). Informe Metodológico del Diseño Muestral. ENUSC 2023. Santiago, Chile. Recuperado el 13 de mayo de 2025.
+
+Sharda, R., Delen, D., & Turban, E. (2024). Business intelligence, analytics, and data science, and AI: A managerial perspective (5.ª ed.). Pearson.
+
+\newpage
+
+
+# Anexos
+
+# Descripción de funciones
+
+***
+
+## Área de Configuración y Paquetes
+
+### base R
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `library()` | Carga un paquete (librería) en la sesión de R para hacer sus funciones disponibles. |
+| `setwd()` | Establece el directorio de trabajo (working directory) a una ruta específica del sistema. |
+| `require()` | Verifica si un paquete puede ser cargado y lo carga, devolviendo un valor lógico. |
+| `install.packages()` | Descarga e instala paquetes desde los repositorios de CRAN. |
+
+### knitr
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `opts_chunk$set()` | Configura opciones globales para todos los chunks de código en un documento R Markdown. |
+
+## Área de Diccionarios de Datos y Variables
+
+Estos atributos son vectores nombrados que funcionan como diccionarios para mapear códigos numéricos a etiquetas de texto legibles, facilitando la interpretación de los datos en gráficos y tablas.
+
+### base R
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `enc_region` | Mapea códigos de región a sus nombres (ej., "1" a "Tarapacá").|
+| `enc_rpc` | Mapea códigos de comuna a sus nombres (ej., "7401" a "Linares"). |
+| `rph_sexo` | Mapea códigos de sexo a sus etiquetas ("1" a "Hombre", "2" a "Mujer"). |
+| `rph_edad` | Mapea códigos de tramos etarios a sus descripciones (ej., "3" a "30 a 39 años"). |
+| `P_AUMENTO_` | Mapea códigos sobre la percepción del aumento de la delincuencia a sus etiquetas. |
+| `P_INSEG_LUGARES_` | Mapea códigos de percepción de inseguridad en lugares específicos a sus etiquetas. |
+| `P_INCIVILIDADES_` | Mapea códigos de frecuencia de incivilidades a sus etiquetas (ej., "5" a "Siempre"). |
+| `P_EXPOS_DELITO` | Mapea códigos sobre la creencia de ser víctima de un delito a sus etiquetas. |
+| `P_DELITO_PRONOSTICO__` | Mapea códigos sobre el tipo de delito que se pronostica sufrir.|
+| `EV_CONFIA_` | Mapea códigos de niveles de confianza en instituciones a sus descripciones.|
+
+## Área de Interfaz de Usuario (UI)
+
+### shiny
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `fluidRow()` | Crea una fila en la UI para organizar elementos horizontalmente. |
+| `column()` | Define una columna dentro de una `fluidRow`, especificando su ancho (de 1 a 12).|
+| `selectizeInput()` | Crea un menú desplegable con opciones de selección múltiple y búsqueda.|
+| `downloadButton()` | Crea un botón que permite al usuario descargar un archivo generado por el servidor.|
+| `HTML()` | Permite incluir código HTML crudo directamente en la interfaz de usuario. |
+| `tabItems()` | Contenedor para las páginas o secciones individuales (`tabItem`) del cuerpo del dashboard. |
+| `tabItem()` | Define el contenido de una pestaña específica del `sidebarMenu`.|
+| `htmlOutput()` | Renderiza un bloque de HTML generado dinámicamente en el servidor.|
+
+### shinydashboard
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `dashboardPage()` | Estructura principal que contiene el header, sidebar y body de un dashboard. |
+| `dashboardHeader()` | Define la barra de título superior del dashboard. |
+| `dashboardSidebar()` | Define el panel lateral, usualmente para menús de navegación y filtros.|
+| `dashboardBody()` | El área principal donde se muestra el contenido y las visualizaciones. |
+| `sidebarMenu()` | Crea un menú de navegación en la barra lateral. |
+| `menuItem()` | Define un elemento individual dentro del `sidebarMenu`. |
+| `box()` | Crea una caja contenedora para organizar contenido, con título y bordes.  |
+| `valueBox()` | Muestra un valor numérico clave con un ícono y un color, ideal para KPIs.|
+| `valueBoxOutput()` | Renderiza un `valueBox` generado dinámicamente en el servidor.|
+
+## Área de Lógica del Servidor y Reactividad
+
+### shiny
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `server()` | Función principal que contiene la lógica de la aplicación Shiny. |
+| `reactive()` | Crea una expresión reactiva que se recalcula automáticamente cuando sus dependencias cambian. |
+| `observe()` | Crea un observador que se ejecuta automáticamente en respuesta a cambios en sus dependencias.  |
+| `renderValueBox()` | Renderiza un `valueBox` en el servidor para ser mostrado en la UI. |
+| `renderPlotly()` | Renderiza un gráfico de `plotly` en el servidor. |
+| `renderLeaflet()` | Renderiza un mapa interactivo de `leaflet` en el servidor. |
+| `renderUI()` | Renderiza un conjunto de elementos de UI dinámicamente desde el servidor.|
+| `downloadHandler()` | Gestiona la lógica para generar y servir un archivo para descarga.|
+| `req()` | Asegura que uno o más valores reactivos estén disponibles antes de continuar la ejecución.|
+| `validate()` / `need()` | Proporciona una forma de mostrar mensajes de error o advertencia si no se cumplen ciertas condiciones.|
+
+### DT
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `renderDataTable()` | Renderiza una tabla interactiva en el servidor para ser mostrada en la UI. |
+| `datatable()` | Crea una tabla de datos interactiva con funcionalidades como paginación, búsqueda y ordenamiento.|
+
+## Área de Manipulación de Datos
+
+### dplyr
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `filter()` | Extrae un subconjunto de filas que cumplen con una o más condiciones lógicas. |
+| `mutate()` | Añade nuevas variables (columnas) a un data frame o transforma las existentes. |
+| `group_by()` | Agrupa un data frame por una o más variables para realizar operaciones por grupo.|
+| `summarise()` | Resume o colapsa los datos en una sola fila por grupo, calculando estadísticas.|
+| `arrange()` | Ordena las filas de un data frame según los valores de una o más columnas. |
+| `select()` / `select_at()` | Selecciona un subconjunto de columnas por nombre o con funciones de ayuda. |
+| `left_join()` | Une dos data frames, manteniendo todas las filas del primer data frame (izquierdo).|
+| `recode()` | Reemplaza valores en un vector basado en un mapeo (ej., de códigos a etiquetas).|
+| `count()` | Cuenta el número de observaciones para cada combinación de variables. |
+| `if_any()` | Función auxiliar para aplicar una condición a través de múltiples columnas.|
+| `rowSums()` | Calcula la suma de cada fila para las columnas especificadas.|
+
+### tidyr
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `pivot_longer()` | Transforma un data frame de formato ancho a largo, apilando múltiples columnas en pares de clave-valor. |
+| `pivot_wider()` | Transforma un data frame de formato largo a ancho, distribuyendo una pareja de columnas en múltiples columnas.|
+
+### forcats
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `fct_rev()` | Invierte el orden de los niveles de una variable de tipo factor. |
+
+## Área de Visualización
+
+### ggplot2
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `ggplot()` | Inicializa un objeto ggplot, especificando el data frame y las estéticas (`aes`) base.|
+| `geom_bar()` / `geom_col()` | Crea un gráfico de barras. `geom_bar` cuenta casos, `geom_col` usa valores directos. |
+| `geom_text()` | Añade etiquetas de texto a un gráfico en coordenadas específicas. |
+| `labs()` | Modifica las etiquetas de los ejes, título, subtítulo y leyenda.|
+| `theme()` | Personaliza los elementos no relacionados con los datos del gráfico (ejes, fondo, etc.).|
+| `scale_fill_brewer()` | Aplica paletas de colores predefinidas de ColorBrewer al relleno de las geometrías. |
+
+### plotly
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `plot_ly()` | Función principal para crear un gráfico interactivo, especificando datos y atributos como `x`, `y`, `color` y `type`. |
+| `layout()` | Modifica la configuración general de un gráfico Plotly (títulos, ejes, leyenda, márgenes).|
+| `subplot()` | Combina múltiples gráficos Plotly en una sola visualización. |
+| `ggplotly()` | Convierte un objeto `ggplot` estático en un gráfico `plotly` interactivo. |
+
+### leaflet
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `leaflet()` | Inicializa un widget de mapa interactivo. |
+| `addProviderTiles()` | Añade una capa de mapa base (como "CartoDB.Positron").  |
+| `addPolygons()` | Dibuja polígonos en el mapa, con opciones de color, opacidad y pop-ups.|
+| `addLegend()` | Añade una leyenda al mapa para interpretar los colores o símbolos. |
+
+### treemapify
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `geom_treemap()` | Geometría para `ggplot2` que crea un treemap donde el área de los rectángulos es proporcional a un valor.  |
+| `geom_treemap_subgroup_border()` | Dibuja bordes alrededor de los grupos de nivel superior en un treemap. |
+| `geom_treemap_text()` / `geom_treemap_subgroup_text()` | Añade etiquetas de texto dentro de los rectángulos individuales o de los grupos. |
+
+## Área de Análisis Estadístico y Clustering
+
+### FactoMineR
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `MCA()` | Realiza un Análisis de Correspondencias Múltiples (MCA), una técnica para analizar variables categóricas. |
+
+### factoextra
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `fviz_mca_ind()` | Visualiza los resultados de un MCA para las observaciones individuales. |
+| `fviz_silhouette()` | Visualiza el gráfico de silueta para evaluar la calidad de un clustering. |
+
+### klaR
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `kmodes()` | Realiza un clustering k-modes, un algoritmo diseñado específicamente para datos categóricos. |
+
+### cluster
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `daisy()` | Calcula una matriz de disimilitud (distancias) entre observaciones, soportando la métrica Gower para datos mixtos. |
+| `silhouette()` | Calcula los valores de silueta para cada observación a partir de una matriz de disimilitud y una asignación de clusters.|
+
+### DescTools
+
+| Función/Atributo | Descripción Breve |
+| :--- | :--- |
+| `CramerV()` | Calcula el estadístico V de Cramér para medir la asociación entre dos variables categóricas.|
+
+
+# Código Dashboard 
+
+El código del dashboard se encuentra disponible en el repositorio de GitHub presente en el siguiente link:
+
+https://github.com/RaulFrugone/Dashboard-Seguridad-Publica-de-Chile
+
+# Como instalar programas y librerías necesarias
+
+Es necesario unicamente instalar RStudio y las librerías que son instaladas automáticamente al correr el código entregado en el repositorio. Para la instalación de RStudio se siguiere utilizar el siguiente tutorial proporcionado por el canal de YouTube PAHO TV:
+
+https://www.youtube.com/watch?v=gdh6afTOA7s&ab_channel=PAHOTV
+
+
